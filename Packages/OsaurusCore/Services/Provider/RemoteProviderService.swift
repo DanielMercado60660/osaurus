@@ -6214,7 +6214,8 @@ extension RemoteProviderService {
     /// endpoint, alongside the discovered ids. Servers outside the strict
     /// OpenAI schema commonly report the window under a vendor key (vLLM's
     /// `max_model_len`, OpenRouter/LM Studio's `context_length`, llama.cpp's
-    /// `max_context_length`, gateway-style `context_window`); honoring it
+    /// `max_context_length`, gateway-style `context_window`, DeepInfra's nested
+    /// `metadata.context_length`); honoring it
     /// keeps the chat budget from collapsing to the 128k unknown-metadata
     /// fallback.
     struct OpenAICompatibleModelDiscovery: Sendable {
@@ -6390,6 +6391,7 @@ extension RemoteProviderService {
         let contextLength: Int?
         let maxContextLength: Int?
         let contextWindow: Int?
+        let metadataContextLength: Int?
 
         private enum CodingKeys: String, CodingKey {
             case id
@@ -6397,6 +6399,11 @@ extension RemoteProviderService {
             case contextLength = "context_length"
             case maxContextLength = "max_context_length"
             case contextWindow = "context_window"
+            case metadata
+        }
+
+        private enum MetadataCodingKeys: String, CodingKey {
+            case contextLength = "context_length"
         }
 
         init(from decoder: Decoder) throws {
@@ -6409,10 +6416,21 @@ extension RemoteProviderService {
             contextLength = Self.lenientInt(container, .contextLength)
             maxContextLength = Self.lenientInt(container, .maxContextLength)
             contextWindow = Self.lenientInt(container, .contextWindow)
+            // DeepInfra nests the window one level down, under `metadata`.
+            // Other servers use that key for anything (null, a string, an
+            // unrelated object), so a non-object value just means no window.
+            if let metadata = try? container.nestedContainer(
+                keyedBy: MetadataCodingKeys.self,
+                forKey: .metadata
+            ) {
+                metadataContextLength = Self.lenientInt(metadata, .contextLength)
+            } else {
+                metadataContextLength = nil
+            }
         }
 
-        private static func lenientInt(
-            _ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys
+        private static func lenientInt<Key: CodingKey>(
+            _ container: KeyedDecodingContainer<Key>, _ key: Key
         ) -> Int? {
             if let int = try? container.decode(Int.self, forKey: key) { return int }
             if let double = try? container.decode(Double.self, forKey: key), double.isFinite {
@@ -6426,9 +6444,10 @@ extension RemoteProviderService {
 
         /// First positive vendor-reported window, in the order the keys are
         /// most specific: vLLM, then OpenRouter/LM Studio, then llama.cpp,
-        /// then gateway-style `context_window`.
+        /// then gateway-style `context_window`, then DeepInfra's nested
+        /// `metadata.context_length`.
         var advertisedContextLength: Int? {
-            [maxModelLen, contextLength, maxContextLength, contextWindow]
+            [maxModelLen, contextLength, maxContextLength, contextWindow, metadataContextLength]
                 .compactMap { $0 }
                 .first { $0 > 0 }
         }
