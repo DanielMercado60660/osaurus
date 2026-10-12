@@ -11381,13 +11381,14 @@ extension ChatView {
         return markers
     }
 
-    /// Copy a turn's thinking + content to the clipboard
+    /// Copy a turn's content to the clipboard. Thinking is left out: the copy
+    /// button sits under the response, and chat export covers the reasoning.
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
 
         // Image-generation replies are just the rendered image — copy the actual
         // image to the clipboard instead of the raw `![](file://…)` markdown.
-        if !turn.contentIsBlank, !turn.hasRenderableThinking,
+        if !turn.contentIsBlank,
             ContentBlock.isImageOnlyContent(turn.visibleContent),
             let imageURL = Self.firstLocalImageURL(in: turn.visibleContent)
         {
@@ -11396,20 +11397,14 @@ extension ChatView {
             return
         }
 
-        var textToCopy = ""
-        if turn.hasRenderableThinking {
-            textToCopy += turn.thinking
-        }
-        if !turn.contentIsBlank {
-            if !textToCopy.isEmpty { textToCopy += "\n\n" }
-            // A user turn copies what the bubble shows: an enveloped dispatch
-            // (channel / delegated / scheduled / watcher) yields the message,
-            // not the machine wrapper around it.
-            textToCopy +=
-                turn.role == .user
-                ? turn.displayContent(sessionSource: session.source)
-                : turn.visibleContent
-        }
+        guard !turn.contentIsBlank else { return }
+        // A user turn copies what the bubble shows: an enveloped dispatch
+        // (channel / delegated / scheduled / watcher) yields the message,
+        // not the machine wrapper around it.
+        let textToCopy =
+            turn.role == .user
+            ? turn.displayContent(sessionSource: session.source)
+            : turn.visibleContent
         guard !textToCopy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
