@@ -128,6 +128,165 @@ struct FileWriteDocumentFormatsTests {
     /// A draft written with typographic bullets (what `file_read` renders
     /// for list paragraphs) must produce list paragraphs, not one soft-wrapped
     /// paragraph per section.
+    /// One package part as text (`unzip -p`).
+    private func packagePart(_ url: URL, _ part: String) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        process.arguments = ["-p", url.path, part]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Cells written as `=…` are formulas, not text: `<f>` elements, no shared string, and the workbook asks the
+    /// spreadsheet app to calculate on open. `'=…` stays literal text. (Before: every cell was a string, so a
+    /// model's `=SUM(B2:B3)` opened as the text "=SUM(B2:B3)".)
+    @Test func xlsxFormulaCellsAreWrittenAsFormulas() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let content = #"""
+            {"sheets": [{"name": "Budget", "rows": [
+              ["Item", "Amount", "Note"],
+              ["Rent", 1200, "'=not a formula"],
+              ["Food", 450, ""],
+              ["Total", "=SUM(B2:B3)", "=B4*1.1"]
+            ]}]}
+            """#
+        let result = try await write(root, ["path": "budget.xlsx", "content": content])
+        #expect(ToolEnvelope.isSuccess(result), "formula xlsx write failed: \(result)")
+        let url = root.appendingPathComponent("budget.xlsx")
+        let sheet = try packagePart(url, "xl/worksheets/sheet1.xml")
+        #expect(sheet.contains("<c r=\"B4\"><f>SUM(B2:B3)</f></c>"), Comment(rawValue: sheet))
+        #expect(sheet.contains("<c r=\"C4\"><f>B4*1.1</f></c>"), Comment(rawValue: sheet))
+        let workbook = try packagePart(url, "xl/workbook.xml")
+        #expect(workbook.contains("fullCalcOnLoad=\"1\""), Comment(rawValue: workbook))
+        let strings = try packagePart(url, "xl/sharedStrings.xml")
+        #expect(strings.contains("<t>=not a formula</t>") || strings.contains(">=not a formula<"), Comment(rawValue: strings))
+        #expect(!strings.contains("SUM(B2:B3)"), "the formula must not also be stored as text")
+
+        let readBack = try await read(root, "budget.xlsx")
+        #expect(ToolEnvelope.isSuccess(readBack))
+        #expect(readBack.contains("SUM(B2:B3)"), Comment(rawValue: readBack))
+
+        // CSV rows take formulas too (quoted when they contain the delimiter).
+        let csv = try await write(root, ["path": "t.xlsx", "content": "a,b,sum\n1,2,\"=SUM(A2,B2)\"\n"])
+        #expect(ToolEnvelope.isSuccess(csv), "csv formula write failed: \(csv)")
+        let csvSheet = try packagePart(root.appendingPathComponent("t.xlsx"), "xl/worksheets/sheet1.xml")
+        #expect(csvSheet.contains("<f>SUM(A2,B2)</f>"), Comment(rawValue: csvSheet))
+    }
+
+    /// `db_export` builds through the same row builder but must never turn stored text into a formula.
+    @Test func databaseRowsKeepFormulaLikeTextLiteral() throws {
+        let workbook = try FileWriteDocumentRouting.workbook(sheets: [("S", [["=1+1", "x"]])])
+        let cell = try #require(workbook.sheets.first?.rows.first?.cells.first)
+        #expect(cell.formula == nil)
+        #expect(cell.value == .string("=1+1"))
+    }
+
+    /// Replacing an existing workbook that has layout/formatting is refused (bytes untouched) and points at
+    /// file_edit, which keeps it; a plain generated workbook can still be regenerated.
+    @Test func overwritingAFormattedWorkbookIsRefusedAndFileEditKeepsIt() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try await write(root, ["path": "plain.xlsx", "content": "Item,Amount\nRent,1200\n"])
+        #expect(ToolEnvelope.isSuccess(first))
+        let again = try await write(root, ["path": "plain.xlsx", "content": "Item,Amount\nRent,1300\n"])
+        #expect(ToolEnvelope.isSuccess(again), "a plain generated workbook regenerates: \(again)")
+
+        // Give a copy column widths and a frozen header row (what spreadsheet apps add).
+        let plain = try Data(contentsOf: root.appendingPathComponent("plain.xlsx"))
+        let package = try OOXMLPackage(data: plain)
+        let sheet = String(decoding: try package.data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+        let styled = sheet.replacingOccurrences(
+            of: "<sheetData",
+            with: #"<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="1" width="22" customWidth="1"/></cols><sheetData"#)
+        #expect(styled != sheet)
+        package.setData("xl/worksheets/sheet1.xml", Data(styled.utf8))
+        let formatted = try package.serialize()
+        try formatted.write(to: root.appendingPathComponent("ops.xlsx"))
+        #expect(XLSXPreservation.featuresLostByRegeneration(formatted) == ["column widths", "freeze panes"])
+        #expect(XLSXPreservation.featuresLostByRegeneration(plain).isEmpty)
+
+        let refused = try await write(root, ["path": "ops.xlsx", "content": "Item,Amount\nRent,1500\n"])
+        #expect(!ToolEnvelope.isSuccess(refused))
+        let message = EnvelopeAssertions.failureMessage(refused) ?? ""
+        #expect(message.contains("column widths") && message.contains("file_edit"), Comment(rawValue: message))
+        #expect(try Data(contentsOf: root.appendingPathComponent("ops.xlsx")) == formatted, "file untouched")
+        // The model must get to act on the refusal in the same turn: the chat loop stops on `rejected`.
+        #expect(EnvelopeAssertions.failureKind(refused) == "invalid_args")
+        let outcome = AgentLoopToolOutcome(
+            invocation: ServiceToolInvocation(toolName: "file_write", jsonArguments: "{}", toolCallId: "w1"),
+            callId: "w1", result: refused, wasDeduped: false, wasError: true)
+        #expect(!AgentToolLoop.shouldStopAfterToolOutcome(outcome), "refusal must not end the turn")
+
+        let edited = try await FileEditTool(rootPath: root).execute(argumentsJSON:
+            #"{"path":"ops.xlsx","operations":[{"op":"set_cells","cells":{"B2":1500,"C2":"=B2*2"}}]}"#)
+        #expect(ToolEnvelope.isSuccess(edited), "file_edit failed: \(edited)")
+        let after = try Data(contentsOf: root.appendingPathComponent("ops.xlsx"))
+        #expect(XLSXPreservation.featuresLostByRegeneration(after) == ["column widths", "freeze panes"], "file_edit kept the layout")
+        let afterSheet = try packagePart(root.appendingPathComponent("ops.xlsx"), "xl/worksheets/sheet1.xml")
+        #expect(afterSheet.contains("<f>B2*2</f>"), Comment(rawValue: afterSheet))
+    }
+
+    /// The osaurus.xlsx plugin's save_xlsx with overwrite over an existing formatted workbook is refused
+    /// before the plugin runs (it writes a minimal package); everything else passes through untouched.
+    @Test func pluginSaveOverAFormattedWorkbookIsRefused() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(ToolEnvelope.isSuccess(try await write(root, ["path": "plain.xlsx", "content": "Item,Amount\nRent,1200\n"])))
+        let plain = try Data(contentsOf: root.appendingPathComponent("plain.xlsx"))
+        let package = try OOXMLPackage(data: plain)
+        let sheet = String(decoding: try package.data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+        package.setData("xl/worksheets/sheet1.xml", Data(sheet.replacingOccurrences(
+            of: "<sheetData", with: #"<cols><col min="1" max="1" width="22" customWidth="1"/></cols><sheetData"#).utf8))
+        try package.serialize().write(to: root.appendingPathComponent("ops.xlsx"))
+
+        func refusal(_ args: String, plugin: String = "osaurus.xlsx", tool: String = "save_xlsx", folder: URL? = nil) -> String? {
+            XLSXPreservation.pluginOverwriteRefusal(pluginId: plugin, toolName: tool, argumentsJSON: args, folderRoot: folder ?? root)
+        }
+        let refused = try #require(refusal(#"{"workbook_id":"w1","path":"ops.xlsx","overwrite":true}"#))
+        #expect(EnvelopeAssertions.failureKind(refused) == "invalid_args")
+        #expect((EnvelopeAssertions.failureMessage(refused) ?? "").contains("file_edit"))
+        // The extension is optional (save_xlsx adds it) and absolute paths resolve as-is.
+        #expect(refusal(#"{"workbook_id":"w1","path":"ops","overwrite":true}"#) != nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"\#(root.appendingPathComponent("ops.xlsx").path)","overwrite":true}"#, folder: URL(fileURLWithPath: "/nonexistent")) != nil)
+        // Passes through: no overwrite, dry run, a plain workbook, a new path, another tool or plugin.
+        #expect(refusal(#"{"workbook_id":"w1","path":"ops.xlsx"}"#) == nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"ops.xlsx","overwrite":true,"dry_run":true}"#) == nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"plain.xlsx","overwrite":true}"#) == nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"new.xlsx","overwrite":true}"#) == nil)
+        #expect(refusal(#"{"path":"ops.xlsx","overwrite":true}"#, tool: "read_xlsx") == nil)
+        #expect(refusal(#"{"workbook_id":"w1","path":"ops.xlsx","overwrite":true}"#, plugin: "someone.else") == nil)
+        // A relative path with no folder cannot be resolved: the plugin runs exactly as before.
+        #expect(XLSXPreservation.pluginOverwriteRefusal(
+            pluginId: "osaurus.xlsx", toolName: "save_xlsx",
+            argumentsJSON: #"{"workbook_id":"w1","path":"ops.xlsx","overwrite":true}"#, folderRoot: nil) == nil)
+    }
+
+    @Test func namespacedWorkbookFormattingIsPreservedOnOverwrite() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(ToolEnvelope.isSuccess(try await write(root, ["path": "prefixed.xlsx", "content": "Item,Amount\nRent,1200\n"])))
+        let url = root.appendingPathComponent("prefixed.xlsx")
+        let package = try OOXMLPackage(data: Data(contentsOf: url))
+        let sheet = String(decoding: try package.data("xl/worksheets/sheet1.xml"), as: UTF8.self)
+        let formatted = sheet.replacingOccurrences(
+            of: "<sheetData", with: #"<cols><col min="1" max="1" width="22" customWidth="1"/></cols><sheetData"#)
+        let prefixed = formatted.replacingOccurrences(
+            of: #"<(\/?)([A-Za-z][\w.-]*)"#, with: "<$1s:$2", options: .regularExpression
+        ).replacingOccurrences(of: "xmlns=", with: "xmlns:s=")
+        package.setData("xl/worksheets/sheet1.xml", Data(prefixed.utf8))
+        let before = try package.serialize()
+        try before.write(to: url)
+        #expect(XLSXPreservation.featuresLostByRegeneration(before).contains("column widths"))
+        let result = try await write(root, ["path": "prefixed.xlsx", "content": "Item,Amount\nRent,1500\n"])
+        #expect(EnvelopeAssertions.failureKind(result) == "invalid_args")
+        #expect(try Data(contentsOf: url) == before)
+    }
+
     @Test func docxBulletGlyphLinesBecomeListParagraphs() async throws {
         DocumentAdaptersBootstrap.registerBuiltIns()
         let root = tmpRoot()
