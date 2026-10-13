@@ -3,6 +3,46 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.21</title>
+            <pubDate>Tue, 13 Oct 2026 16:18:07 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.21</sparkle:version>
+            <sparkle:shortVersionString>0.25.21</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.21/Osaurus-0.25.21.dmg" length="82841544" type="application/octet-stream" sparkle:edSignature="Pi/B4ii/v1vGx+3T6kd3Ciacbo5PsHYnyu41LzhBRVutrtgn87cohZAekuK1BuYJoCcTJ5+FKE90TlH65530CA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- MiniCPM-V 4.7 + DSpark: pin vmlx-swift, DSpark load warmup, solo lease for drafter requests (#3075) by @jjang-ai
+- Pin vmlx-swift #572: background cache writes (shorter Finishing up) and bundled Uno for K2 (#3063) by @jjang-ai
+- stop showing injected memory in user bubbles for chats continued from the phone (#3070) by @RaajeevChandran
+- fix /api/show 404 for external models listed by repo name (#3069) by @htjworld
+- Support Qwen-Image-2.1-Turbo image bundles (#3059) by @jjang-ai
+- fix app hangs by decoupling menu items from high-churn app state (#3052) by @[sentry[bot]](https://github.com/apps/sentry)
+
+## 🐛 Bug Fixes
+
+- PDF body-text edits: don't advise regenerating the PDF with file\_write (#3074) by @jjang-ai
+- Workbooks: keep formatting and formulas through model edits (#3073) by @jjang-ai
+- file\_write: remove the 30,000-character content cap and the 64 KiB streamed tool-call abort (#3066) by @jjang-ai
+- read nested metadata.context\_length so DeepInfra context windows resolve (#3068) by @RaajeevChandran
+- Fix app hang from uncached menu localization lookups (#3053) by @[sentry[bot]](https://github.com/apps/sentry)
+- make copy button copy only the response (#3067) by @RaajeevChandran
+- Fix UI hang from synchronous WhatsApp config loading (#3058) by @[sentry[bot]](https://github.com/apps/sentry)
+- fix themes tab hang by moving duplicate fingerprinting off main thread (#3060) by @[sentry[bot]](https://github.com/apps/sentry)
+- fix app hang when opening Apple-app URLs from tools (#3065) by @[sentry[bot]](https://github.com/apps/sentry)
+- give shell\_run the login shell PATH so version-manager toolchains resolve (#3056) by @RaajeevChandran
+- fixed plugins tab freezing on scroll (#3057) by @RaajeevChandran
+- Fix UI hang from uncached localization lookups in menu getters (#3054) by @[sentry[bot]](https://github.com/apps/sentry)
+- fix forced tool\_choice 400 on claude 5.5 models and surface openrouter upstream errors (#3055) by @RaajeevChandran
+- Correct 0.25.20 appcast notes to match the tagged binary (#3049) by @jjang-ai
+- fix file\_edit dropping an explicit empty new\_string (#3048) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.20...0.25.21
+]]></description>
+        </item>
+        <item>
             <title>0.25.20</title>
             <pubDate>Thu, 08 Oct 2026 15:52:49 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
