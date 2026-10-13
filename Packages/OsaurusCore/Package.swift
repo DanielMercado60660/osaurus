@@ -327,9 +327,12 @@ let package = Package(
         // text-only cache checkpoints use exact active-template prefix proofs.
         // vmlx-swift#569 adds Qwen-Image-2.1-Turbo: bundle-pinned 8-step sampling
         // grid (model_index.json sample_sigmas), its registry entry and routing.
+        // vmlx-swift#572 (stacked on #570 and #571): write-behind SSD prompt-cache stores so the
+        // end of a turn or tool call no longer waits for the files to reach disk, and Uno
+        // self-speculation for K2 Horizon bundles that ship a uno/ adapter.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "9db627f3f2518cf47440f313caf875dfb08d49db"
+            revision: "e6e95be1a062082375461a9d7e79cdb98c0eab1b"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

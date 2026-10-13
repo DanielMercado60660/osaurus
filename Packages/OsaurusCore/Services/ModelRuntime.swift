@@ -289,12 +289,15 @@ public actor ModelRuntime {
         let measuredFamilyAutoDepth: Int?
         var bundledDFlash2 = false
         var selectedDFlash2 = false
-        var hasCompatibleDFlash2: Bool { bundledDFlash2 || selectedDFlash2 }
+        /// A `uno/` self-speculation adapter in the bundle that fits it (validated by the engine).
+        var bundledUno = false
+        var hasCompatibleDFlash2: Bool { bundledDFlash2 || selectedDFlash2 || bundledUno }
         var speculationAvailable: Bool { hasCompatibleDFlash2 || (bundleHasMTP && isTargetMTPFamily) }
         var speculationBlocked: Bool { !hasCompatibleDFlash2 && isBlocked }
         var familyDefaultOn: Bool { hasCompatibleDFlash2 || (bundleHasMTP && measuredFamilyAutoDepth != nil && !isBlocked) }
         var speculationCapabilityDescription: String {
             if selectedDFlash2 { return "Compatible selected DFlash 2 drafter detected" }
+            if bundledUno { return "Bundled Uno self-speculation adapter detected" }
             if bundledDFlash2 { return "Compatible bundled DFlash 2 drafter detected" }
             if !bundleHasMTP { return "No MTP head or compatible drafter detected" }
             if isBlocked { return "MTP head detected · blocked by tuning" }
@@ -333,6 +336,8 @@ public actor ModelRuntime {
         let config = try? Data(contentsOf: directory.appendingPathComponent("config.json"))
         let bundledDFlash2 = VMLXServerRuntimeSettings().bundledDFlash2Drafter(
             configData: config, bundleDirectory: directory) != nil
+        let bundledUno = VMLXServerRuntimeSettings().bundledUnoAdapter(
+            configData: config, bundleDirectory: directory) != nil
         // Availability remains discoverable under Off, so re-enabling never
         // requires loading weights. The selected mode controls execution/display.
         var selectedSettings = ServerRuntimeSettingsStore.snapshot()
@@ -347,6 +352,7 @@ public actor ModelRuntime {
             measuredFamilyAutoDepth: status.measuredFamilyAutoDepth,
             bundledDFlash2: bundledDFlash2,
             selectedDFlash2: selectedDFlash2,
+            bundledUno: bundledUno,
             statusLine: status.statusLine
         )
     }
@@ -1706,6 +1712,10 @@ public actor ModelRuntime {
                         // A refused purge touched nothing; a failed one may
                         // still have removed payloads before it stopped.
                         if result.error == nil || result.removedFiles > 0 {
+                            // Queued writes are absent from the index the purge just scanned.
+                            // Cancel their publication before releasing the writer's IO lock,
+                            // including writers retained after model unload.
+                            DiskCache.invalidatePendingWrites(in: root)
                             changedRootPaths.insert(root.path)
                             if result.error == nil { DiskCachePressureHistory.clear(directory: root) }
                         }
@@ -6642,8 +6652,14 @@ public actor ModelRuntime {
             configData: configData,
             jangConfig: jangConfig,
             status: status,
+            // A drafter that ships in, or was selected for, this bundle: DFlash 2 (selected or
+            // bundled `dflash2/`) or a bundled Uno adapter (`uno/`, validated against the bundle by
+            // the engine). Per-request admission then keeps the loaded strategy instead of
+            // re-deriving native MTP, which would drop it.
             externalDrafterSelected: settings.resolvedDFlash2Selection(
                 configData: configData, bundleDirectory: modelDirectory) != nil
+                || settings.bundledUnoAdapter(
+                    configData: configData, bundleDirectory: modelDirectory) != nil
         )
         try admission.validateLoad(
             settings: settings,

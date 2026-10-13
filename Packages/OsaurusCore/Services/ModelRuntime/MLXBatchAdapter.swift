@@ -949,6 +949,12 @@ struct MLXBatchAdapter {
         runtime: RuntimeConfig,
         maxBatchSize: Int
     ) async {
+        if case .uno(let adapterPath, _)? = draftStrategy {
+            await warmupUnoAtLoad(
+                modelName: modelName, container: container, adapterPath: adapterPath,
+                maxBatchSize: maxBatchSize)
+            return
+        }
         guard draftStrategy?.usesNativeMTP == true else { return }
         guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
         guard await !Registry.shared.isNativeMTPWarm(modelName: modelName) else { return }
@@ -993,6 +999,59 @@ struct MLXBatchAdapter {
                 "native MTP load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — falling back to first-request AR warmup"
             )
         }
+    }
+
+    /// Uno (bundled self-speculation adapter): install the adapter and compile the speculative
+    /// shapes right after load, so chats never stall on a kernel compile (on K2 Horizon the first
+    /// 8+-row forward compiles the lane matmul, ~1.8 s on an M5 Max and longer on older chips; the
+    /// first long-context block compiles the multi-row attention's long variant). Runs in small
+    /// steps (`UnoWarmup.steps`), each under the same solo lease and exclusive Metal gate as a
+    /// generation, released between steps: a message sent during warm-up waits for at most one step
+    /// (~1 s), never the whole warm-up (all at once delayed the first message by 4.7 s). Steps not
+    /// reached before a request simply compile on use.
+    private static func warmupUnoAtLoad(
+        modelName: String,
+        container: ModelContainer,
+        adapterPath: URL,
+        maxBatchSize: Int
+    ) async {
+        guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        PrefillDebugLog.shared.log("==UNO WARMUP-START model=\(modelName) adapter=\(adapterPath.path)")
+        var done: [String] = []
+        for step in UnoWarmup.steps(adapterDirectory: adapterPath) {
+            if Task.isCancelled { break }
+            let lease = maxBatchSize == 1
+                ? await Registry.shared.acquireSoloLease(for: modelName) : nil
+            do {
+                try await MetalGate.shared.enterMediaPrep(model: modelName)
+            } catch {
+                await lease?.release()
+                break
+            }
+            do {
+                let ms = try await container.perform { context in
+                    try UnoWarmup.prepare(
+                        step: step, model: context.model, adapterDirectory: adapterPath)
+                }
+                done.append("\(step)=\(ms.map(String.init) ?? "skip")")
+            } catch {
+                batchAdapterLog.notice(
+                    "Uno load warmup step \(String(describing: step), privacy: .public) failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — compiles on use"
+                )
+                await MetalGate.shared.exitMediaPrep(model: modelName)
+                await lease?.release()
+                break
+            }
+            await MetalGate.shared.exitMediaPrep(model: modelName)
+            await lease?.release()
+        }
+        let wallMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+        PrefillDebugLog.shared.log(
+            "==UNO WARMUP-DONE model=\(modelName) steps=\(done.joined(separator: ",")) wallMs=\(wallMs)")
+        batchAdapterLog.info(
+            "Uno load warmup for \(modelName, privacy: .public): \(done.joined(separator: ","), privacy: .public) in \(wallMs, privacy: .public) ms"
+        )
     }
 
     // MARK: - Image preprocessing
