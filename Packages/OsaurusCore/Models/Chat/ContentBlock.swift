@@ -145,10 +145,10 @@ enum ContentBlockKind: Equatable {
             return lRole == rRole && lName == rName && lFirst == rFirst
 
         case let (.paragraph(lIdx, lText, lStream, lRole), .paragraph(rIdx, rText, rStream, rRole)):
-            // Compare text length first (O(1)) - if lengths differ, content changed
-            // Only do full comparison if lengths are equal (rare during streaming)
+            // String equality already fast-paths shared storage. Avoid String.count's
+            // grapheme walk without rejecting canonically equivalent Unicode strings
+            // whose UTF-8 byte lengths differ.
             guard lIdx == rIdx && lStream == rStream && lRole == rRole else { return false }
-            guard lText.count == rText.count else { return false }
             return lText == rText
 
         case let (.toolCallGroup(lCalls), .toolCallGroup(rCalls)):
@@ -160,7 +160,6 @@ enum ContentBlockKind: Equatable {
         case let (.thinking(lIdx, lText, lStream, lDur), .thinking(rIdx, rText, rStream, rDur)):
             // Same optimization as paragraph
             guard lIdx == rIdx && lStream == rStream && lDur == rDur else { return false }
-            guard lText.count == rText.count else { return false }
             return lText == rText
 
         case let (
@@ -168,7 +167,6 @@ enum ContentBlockKind: Equatable {
             .userMessage(rText, rAttach, rTime, rResp, rEnv)
         ):
             guard lTime == rTime && lResp == rResp else { return false }
-            guard lText.count == rText.count else { return false }
             guard lAttach.count == rAttach.count else { return false }
             return lText == rText && lAttach == rAttach && lEnv == rEnv
 
@@ -220,7 +218,6 @@ enum ContentBlockKind: Equatable {
             .compactionMarker(rSaved, rModel, rText)
         ):
             guard lSaved == rSaved && lModel == rModel else { return false }
-            guard lText.count == rText.count else { return false }
             return lText == rText
 
         case let (.followUpSuggestions(lId, lSugg), .followUpSuggestions(rId, rSugg)):
