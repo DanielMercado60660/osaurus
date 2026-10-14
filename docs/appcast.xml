@@ -3,6 +3,32 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.22</title>
+            <pubDate>Wed, 14 Oct 2026 14:58:16 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.22</sparkle:version>
+            <sparkle:shortVersionString>0.25.22</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.22/Osaurus-0.25.22.dmg" length="82876233" type="application/octet-stream" sparkle:edSignature="eqL5pAr5HlVRM0Tj8IDmAW79XM++Z0Q7M5QXUBkzkvtifZlQvW6OQiAEbJ8Z7wzoMyfJwD4pMaqSvw4jbSJEDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- fix(runtime): pin Flash-Next MTP speed restoration (vmlx-swift #593) (#3087) by @jjang-ai
+- Count all production compute weights in model and subagent admission (#3085) by @jjang-ai
+- Propagate screenshot scrubbing failures before cloud attachment (#3084) by @jjang-ai
+- Rank pinned memory text matches by relevance before salience (#3083) by @jjang-ai
+- Integrate native Liquid tools and corrected LFM affine/JANGH runtime (#3082) by @jjang-ai
+- Chat table: coalesce per-child height notes and stop grapheme-walking block equality (#3080) by @jjang-ai
+- Fix Sentry crashes: plugin ABI table (337), settings window constraint loop (1ZM), clipboard poller race (1QM) (#3079) by @jjang-ai
+- Speech models: stop a Core ML crash at launch from repeating on every launch (#3076) (#3078) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.21...0.25.22
+]]></description>
+        </item>
+        <item>
             <title>0.25.21</title>
             <pubDate>Tue, 13 Oct 2026 16:18:07 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
