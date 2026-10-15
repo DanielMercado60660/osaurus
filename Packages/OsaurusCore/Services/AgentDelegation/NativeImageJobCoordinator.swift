@@ -236,11 +236,15 @@ struct NativeImageJobResult: Sendable, Equatable {
             "unloaded_chat_models": unloadedChatModels,
             "restored_chat_models": restoredChatModels,
             "images": images.map { image in
-                [
+                var result: [String: Any] = [
                     "path": image.url.path,
                     "url": image.url.absoluteString,
                     "seed": image.seed,
-                ] as [String: Any]
+                ]
+                if let parameters = image.effectiveParameters {
+                    result["effective_parameters"] = parameters.jsonObject
+                }
+                return result
             },
             // NOTE: per-step progress telemetry is deliberately NOT surfaced to the
             // model — neither stored on the result nor in this payload. It is ~8KB
@@ -611,7 +615,7 @@ actor NativeImageJobCoordinator {
             residencySettled = true
             try checkInterrupt()
             record(NativeImageJobProgress(jobID: jobID, phase: .completed, model: model))
-            activityRow?.finish(producedCount: produced.count, jobId: jobID, error: nil)
+            activityRow?.finish(producedCount: produced.count, jobId: jobID, images: produced, error: nil)
             continuation.yield(
                 NativeImageJobResult(
                     jobID: jobID,

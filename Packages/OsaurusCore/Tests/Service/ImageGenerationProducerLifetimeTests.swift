@@ -137,21 +137,29 @@ struct ImageProducerFixture: Sendable {
     init(held: Set<Int>, gate: MetalGate = .makeForTesting(),
          canonical: String? = nil, kind: ModelKind = .imageGen,
          capabilities: ImageModelCapabilities? = nil, identityStem: String? = nil,
-         heldCheckpoints: Set<ImageGenerationService.StreamCheckpoint> = []) {
+         heldCheckpoints: Set<ImageGenerationService.StreamCheckpoint> = [],
+         effectiveParameters: EffectiveImageParameters? = nil, limits: FluxModelLimits? = nil) {
         let newLog = ImageProducerLog()
         let newProbe = ImageProducerProbe(held: held, log: newLog)
         let newCheckpoints = ImageProducerCheckpoints(held: heldCheckpoints)
         let newError = ImageProducerErrorSignal()
         let stem = (identityStem ?? canonical ?? "image-service") + "-fixture-" + UUID().uuidString.lowercased()
         let nameA = stem + "-a", nameB = stem + "-b"
+        let metadata: (@Sendable (URL) throws -> FluxModelLimits)?
+        if let limits {
+            metadata = { _ in limits }
+        } else {
+            metadata = nil
+        }
         var targets: [String: ImageGenerationService.LoadTarget] = [:]
         for name in [nameA, nameB] {
             ModelRegistry.register(ModelEntry(name: name, displayName: name,
                 kind: kind, defaultSteps: 40, defaultGuidance: 1,
+                limits: metadata,
                 loader: { [weak newProbe] _, _ in
                     guard let newProbe else { throw CancellationError() }
                     await newProbe.loaded(name)
-                    return ControlledImageProducer(probe: newProbe)
+                    return ControlledImageProducer(probe: newProbe, effectiveParameters: effectiveParameters)
                 }))
             let info = ImageModelInfo(id: name, canonicalName: canonical ?? name,
                 displayName: name, kind: kind.rawValue, ready: true,
@@ -230,6 +238,7 @@ actor ImageProducerProbe {
 
 struct ControlledImageProducer: ImageGenerator, ImageEditor {
     let probe: ImageProducerProbe
+    var effectiveParameters: EffectiveImageParameters? = nil
     func generate(_ request: ImageGenRequest) -> AsyncThrowingStream<ImageGenEvent, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -238,7 +247,7 @@ struct ControlledImageProducer: ImageGenerator, ImageEditor {
                 await probe.wait(index)
                 await probe.ended(index)
                 continuation.yield(.completed(url: request.outputDir.appendingPathComponent("fixture-\(index).png"),
-                    seed: request.seed ?? 0))
+                    seed: request.seed ?? 0, effectiveParameters: effectiveParameters))
                 continuation.finish()
             }
         }
@@ -248,7 +257,7 @@ struct ControlledImageProducer: ImageGenerator, ImageEditor {
             Task {
                 await probe.edited(request)
                 continuation.yield(.completed(url: request.outputDir.appendingPathComponent("fixture-edit.png"),
-                    seed: request.seed ?? 0))
+                    seed: request.seed ?? 0, effectiveParameters: effectiveParameters))
                 continuation.finish()
             }
         }
