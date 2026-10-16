@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "3adcadacd643f7caffff5270c3789c2884d610e6"
+        let expectedRuntimeHardenedRevision = "8467b0e340f48b961d10e6a4e425379107d74a5a"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -3167,7 +3167,18 @@ struct RuntimePolicySourceTests {
             "public func cancelTask(",
             in: tasks
         )
-        #expect(cancelBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
+        #expect(cancelBody.contains("finishChatCancellation(state, stopSession: true)"))
+        let streamingBody = try Self.functionBody(
+            "private func handleChatStreamingChange(",
+            in: tasks
+        )
+        #expect(streamingBody.contains("state.chatSession?.stopRequested == true"))
+        #expect(streamingBody.contains("finishChatCancellation(state, stopSession: false)"))
+        let cancellationBody = try Self.functionBody(
+            "private func finishChatCancellation(",
+            in: tasks
+        )
+        #expect(cancellationBody.contains("releaseResidencyAndRearmChatWarmup(after: state)"))
 
         let releaseBody = try Self.functionBody(
             "private func releaseResidencyAndRearmChatWarmup(",
