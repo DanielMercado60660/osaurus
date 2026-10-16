@@ -5205,7 +5205,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 steps: item.imageDefaultSteps,
                 guidance: item.imageDefaultGuidance.map { Double($0) }
             )
-            limits = ImageHTTPParameterBuilder.limits(canonicalName: item.imageCanonicalName, capabilities: caps)
+            limits = ImageHTTPParameterBuilder.limits(canonicalName: item.imageCanonicalName,
+                capabilities: caps, runtime: item.imageRequestLimits)
             maxGuidance = 20
         }
     }
@@ -12993,7 +12994,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
-        guard dto.allow_remote_media_spend == true else {
+        guard request.target.backend == .local || dto.allow_remote_media_spend == true else {
             sendImageError(
                 head: head,
                 context: context,

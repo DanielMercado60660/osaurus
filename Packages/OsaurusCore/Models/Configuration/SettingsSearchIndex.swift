@@ -1199,7 +1199,7 @@ public enum SettingsSearchIndex {
             id: "imageGeneration.videoPermission",
             tab: .imageGeneration,
             section: "Permissions",
-            title: "Video jobs (cloud)",
+            title: "Video jobs",
             keywords: ["video permission", "video jobs", "quoted video", "ask", "deny"],
             subTab: "Settings"
         ),
@@ -1207,7 +1207,7 @@ public enum SettingsSearchIndex {
             id: "imageGeneration.video",
             tab: .imageGeneration,
             section: "Defaults",
-            title: "Video (cloud)",
+            title: "Video",
             keywords: [
                 "video", "text to video", "image to video", "video model", "venice", "video jobs",
             ],
@@ -1220,6 +1220,34 @@ public enum SettingsSearchIndex {
             title: "Image model load policy",
             keywords: ["load policy", "image jobs", "unload", "residency", "gpu"],
             subTab: "Settings"
+        ),
+        .init(
+            id: "imageGeneration.previews", tab: .imageGeneration, section: "Image Models",
+            title: "Live previews", keywords: ["image preview", "denoising preview", "progress image"], subTab: "Models"
+        ),
+        .init(
+            id: "imageGeneration.sampler",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Sampler",
+            keywords: ["image sampling", "heun", "euler"],
+            subTab: "Models"
+        ),
+        .init(
+            id: "imageGeneration.scheduler",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Scheduler",
+            keywords: ["image schedule", "sigma", "linear"],
+            subTab: "Models"
+        ),
+        .init(
+            id: "imageGeneration.shift",
+            tab: .imageGeneration,
+            section: "Image Models",
+            title: "Timestep shift",
+            keywords: ["image shift", "flow matching", "sigma shift"],
+            subTab: "Models"
         ),
         .init(
             id: "imageGeneration.upscale",
