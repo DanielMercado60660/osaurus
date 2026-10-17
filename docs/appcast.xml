@@ -3,6 +3,36 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.23</title>
+            <pubDate>Sat, 17 Oct 2026 01:49:49 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.23</sparkle:version>
+            <sparkle:shortVersionString>0.25.23</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.23/Osaurus-0.25.23.dmg" length="83415402" type="application/octet-stream" sparkle:edSignature="KjEabfJ+cHSwG38s6adbeAVFqX2Tocs1Erq7ET8VdXkUrLcAO9LCeptGUas3l90XxNF8Bpqn1q3ccXoNrsGHDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Integrate native workflow media controls, video and memory admission (#3104) by @jjang-ai
+- Nemotron 3.5 Super-VL and Bolt runtime: vmlx-swift pin and declared reasoning modes (#3119) by @jjang-ai
+- ask for a short spoken reply on a phone's voice-call turns, as a note after the conversation that is never saved (#3106) by @RaajeevChandran
+- Consume native image batches across API tools and galleries (#3098) by @jjang-ai
+- Expose SeedVR2 upscaling and cooperative job cancellation (#3096) by @jjang-ai
+- Preserve effective image workflow parameters in app and API results (#3095) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Fix image bundles entering the language-model download path (#3118) by @jjang-ai
+- Wire Nemotron Super-VL runtime and bundle media capabilities (#3114) by @jjang-ai
+- accept slack messages posted through apps from allowlisted senders (#3113) by @RaajeevChandran
+- add reasoning effort control for gemini text models (#3115) by @RaajeevChandran
+- fix agent working folder getting cleared when saving the agent editor (#3116) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.22...0.25.23
+]]></description>
+        </item>
+        <item>
             <title>0.25.22</title>
             <pubDate>Wed, 14 Oct 2026 14:58:16 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
