@@ -12,6 +12,12 @@ actor SmartTurnService {
     private var model: SmartTurnModel?
     private var loadedDirectory: URL?
 
+    /// Load the model and run one throwaway pass so the first real end-of-turn
+    /// check doesn't pay Metal pipeline compilation (~2 s cold, ~5 ms warm).
+    func warmUp(directory: URL) async {
+        _ = try? await predict(samples: [Float](repeating: 0, count: 16_000), directory: directory)
+    }
+
     func predict(samples: [Float], directory: URL) async throws -> SmartTurnPrediction {
         try Task.checkCancellation()
         let features = SmartTurnFeatures.extract(samples)

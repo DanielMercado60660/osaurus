@@ -245,3 +245,17 @@ Ordinary `git add -A` and `git commit` succeeded. No push, branch switch,
 other-worktree/cache modification, dependency addition, installation, login,
 Keychain prompt or delegated agent. Read the requested preamble, AGENTS, spec,
 T03/T03b/T06/T12/T16 results and local Rust/MLX references. `~/AGENTS.md` was absent.
+
+## Host verification (Claude, outside the sandbox)
+
+- Full golden on GPU (`build/T17/host-golden/comparison.json`): **PASS**, 4/4
+  clips, Swift vs reference logit |diff| ≤ 7.3e-06, features ≤ 2.2e-05.
+  Warm inference 4–11 ms; **first call 2155 ms** (Metal pipeline compile).
+- Semantics sanity (`say`-generated, Swift probe): "What is the capital of
+  France?" p=0.979, "Can you set a timer for ten minutes please." p=0.987,
+  "I was thinking that maybe we could" p=0.291, "So the thing about the meeting
+  is that um" p=0.345. (The mama-mei `speech_fixture.wav` full clip scores
+  0.010 in both Swift and the reference — a property of that fixture.)
+- Added `SmartTurnService.warmUp(directory:)`, called detached at talk start
+  when Smart Turn is active, so the first end-of-turn check isn't the 2 s cold
+  compile.

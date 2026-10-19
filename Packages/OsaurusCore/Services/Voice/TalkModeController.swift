@@ -156,6 +156,9 @@ public final class TalkModeController: ObservableObject {
                                   fallbackSilenceMs: configuration.effectiveEndSilenceMs(smartTurnActive: false))
         self.duplex = duplex
         self.gate = gate
+        if let smartTurnDirectory {
+            Task.detached(priority: .utility) { await SmartTurnService.shared.warmUp(directory: smartTurnDirectory) }
+        }
         startup = Task { [weak self] in
             guard let self else { return }
             do {
