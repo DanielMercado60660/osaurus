@@ -110,3 +110,17 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   talk advisory ≤16 GB), T13 phone remote screen (off by default,
   helper-verified owner only, rate-limited, logged, on-Mac indicator) merged.
   T13 security review running.
+
+## 2026-10-19 (day 1, evening)
+
+- **Live check** (Release build, isolated keychain-free profile, port 1337,
+  opened `/phone` in a browser at 375×812): page loads with companion header;
+  with no model set it shows a clear error (→ T14 phone model picker); after
+  `PUT /agents/{id}/model` Qwen3.5-4B, a phone message streamed a reply
+  end-to-end. `/v1/audio/speech` without PocketTTS → clean 400; screen
+  endpoint → 403 `phone_owner_required` for plain loopback and for a forged
+  marker header.
+- T13 security review → T13b (event-loop trust check before audit, durable
+  audit required, owner-login only, overlay + notification indicator, setting
+  auto-reset) merged.
+- Fork README drafted (`fork/README.md`).
