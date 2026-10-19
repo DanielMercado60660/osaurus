@@ -76,3 +76,21 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   per-turn errors non-fatal, speak tool vs talk stream, dropped utterance,
   speculative ASR, first-sentence release) running on top of T06 (headless
   WAV-in latency harness `fork/metrics/talk_bench.sh`).
+
+## 2026-10-19 (day 1)
+
+- Full app builds green with T01–T07, T03b, T05, T06 merged (fixed one Swift 6
+  `sending` error in T07's `/v1/audio/speech` writer).
+- Merged T08 (computer use: localized app-name catalog for B3, precise
+  validation errors for B4; B5 already fixed upstream → regression added) and
+  T09 (companion: click-to-talk without opening chat, presence mode with
+  caption bubble, happy/oops/surprised reactions, idle micro-actions, eye
+  follow, per-agent accessories) + caption sync to played audio chunks.
+- Deterministic evals (`OSAURUS_EVALS_SCRIPTED_ONLY=1`, 12 suites incl.
+  ComputerUse, ComputerUseLoop, ScreenContext): **all floors met**. SwiftPM
+  needs `--build-system native` here (default Swift Build engine fails on MLX
+  `.metal` without the Metal Toolchain component).
+- Talk benchmark blocked: osaurus' FluidAudio 0.14.x needs PocketTTS files in
+  the old flat layout; the cached copy is the newer v2.1 layout. Needs a
+  ~700 MB download (asked owner). Silero VAD (1.1 MB) downloaded.
+- Running: T10 packaging/size (Codex), app rebuild.
