@@ -4,6 +4,8 @@ import SwiftUI
 
 struct PhoneAccessSettingsCard: View {
     @ObservedObject private var service = TailscalePhoneAccessService.shared
+    @ObservedObject private var reachability = PhoneReachabilityService.shared
+    @ObservedObject private var login = LoginItemService.shared
     @ObservedObject private var screen = PhoneScreenService.shared
     @State private var screenPermission = false
     @EnvironmentObject var server: ServerController
@@ -15,7 +17,7 @@ struct PhoneAccessSettingsCard: View {
         GroupBox("Phone access over Tailscale") {
             VStack(alignment: .leading, spacing: 12) {
                 Toggle(
-                    "Phone access",
+                    "Keep my AI reachable",
                     isOn: Binding(
                         get: { service.enabled },
                         set: { enabled in
@@ -25,6 +27,15 @@ struct PhoneAccessSettingsCard: View {
                     )
                 )
                 .settingsLandingAnchor("server.phoneAccess")
+                Text(PhoneReachabilityPolicy.status(enabled: service.enabled, power: reachability.power,
+                    assertionActive: reachability.assertionActive, state: service.state))
+                    .font(.caption).textSelection(.enabled)
+                if service.enabled {
+                    Text(login.statusMessage).font(.caption).textSelection(.enabled)
+                    if let error = reachability.assertionError { Text(error).foregroundStyle(.red) }
+                }
+                Text("Starts at login in the menu bar and prevents idle system sleep on AC power. The display may sleep. Battery power, closing the lid, manual sleep, shutdown, or quitting Osaurus can make your Mac unreachable.")
+                    .font(.caption)
                 Toggle("Allow phone to view this Mac's screen", isOn: Binding(
                     get: { screen.allowed }, set: { screen.setAllowed($0) }
                 ))

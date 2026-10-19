@@ -21,6 +21,15 @@ final class TailscalePhoneAccessService: ObservableObject {
     private var serverPort: Int?
     private var retiringProcesses: [Process] = []
     private var restartTask: Task<Void, Never>?
+    private var healthTask: Task<Void, Never>?
+    private var health = PhoneHelperHealth()
+    private let healthClockOrigin = ContinuousClock.now
+    private var healthTime: TimeInterval {
+        // Match Task.sleep's continuous clock, including time spent asleep.
+        // systemUptime can exclude sleep and strand an expired probe on wake.
+        let elapsed = healthClockOrigin.duration(to: .now).components
+        return Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
+    }
 
     init(defaults: UserDefaults = .standard, screen: @escaping @MainActor () -> PhoneScreenService = { .shared }) {
         self.screen = screen
@@ -72,7 +81,22 @@ final class TailscalePhoneAccessService: ObservableObject {
     func serverStarted(port: Int) { serverPort = port; stop(); startIfEnabled() }
     func serverStopped() { serverPort = nil; stop() }
 
+    /// Probe the live helper over its existing parent-owned stdin/status stream.
+    func checkHealth() {
+        guard enabled, serverPort != nil, state.phase != .needsLogin,
+            health.begin(now: healthTime) else { return }
+        try? input?.fileHandleForWriting.write(contentsOf: Data("health\n".utf8))
+        healthTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, let self,
+                self.health.shouldRestart(now: self.healthTime), self.enabled else { return }
+            self.stop()
+            self.startIfEnabled()
+        }
+    }
+
     func stop() {
+        healthTask?.cancel(); healthTask = nil; health.cancel()
         generation = UUID()
         restartTask?.cancel(); restartTask = nil
         PhoneAccessTrust.shared.replace(with: nil)
@@ -173,6 +197,9 @@ final class TailscalePhoneAccessService: ObservableObject {
                 if let device = event.device { recordDevice(device) }
                 else {
                     state.receive(event)
+                    if event.type == "running" || event.type == "login_url" {
+                        health.running(); healthTask?.cancel(); healthTask = nil
+                    }
                     if event.type == "owner_login", let owner = event.value {
                         PhoneAccessTrust.shared.setOwnerLogin(owner)
                     }

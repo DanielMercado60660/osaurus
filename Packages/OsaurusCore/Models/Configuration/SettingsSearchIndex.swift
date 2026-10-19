@@ -176,7 +176,8 @@ public enum SettingsSearchIndex {
             tab: .settings,
             section: "General",
             title: "Start at Login",
-            keywords: ["launch", "startup", "autostart"]
+            keywords: ["launch", "startup", "autostart"],
+            disambiguation: "General login preference. Keep my AI reachable also requires login registration while phone access is on."
         ),
         .init(
             id: "settings.general.updates",
@@ -982,8 +983,8 @@ public enum SettingsSearchIndex {
         ),
         .init(
             id: "server.phoneAccess", tab: .server, section: "Phone access over Tailscale",
-            title: "Phone access", keywords: ["phone", "tailscale", "mobile", "qr", "reach it from your phone"], subTab: "Overview",
-            disambiguation: "Private tailnet access. Separate from Mobile pairing and the public relay."
+            title: "Keep my AI reachable", keywords: ["phone access", "phone", "tailscale", "mobile", "qr", "reach it from your phone", "always on", "sleep", "battery", "login"], subTab: "Overview",
+            disambiguation: "Phone access: starts at login and keeps the Mac awake on AC power. Separate from Mobile pairing and the public relay. Start at Login remains required while phone access is on."
         ),
         .init(
             id: "server.phoneAccess.screen", tab: .server, section: "Phone access over Tailscale",

@@ -14,7 +14,7 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 [`OSAURUS_WORKSPACES.md`](OSAURUS_WORKSPACES.md) (workspace sharing).
 
 The fork also provides a browser client at `/phone` through the opt-in embedded
-Tailscale helper (Server → Overview → Phone access). That transport authenticates
+Tailscale helper (Server → Overview → Keep my AI reachable). That transport authenticates
 each tailnet peer with WhoIs, the owner's login allowlist and optional StableID
 device restrictions, then forwards over loopback with a per-launch capability
 delivered to the helper over stdin. The helper validates the node's Host names
@@ -45,7 +45,7 @@ paired/public-relay clients never authorize this endpoint. Stale helpers without
 the device or login header fail closed; build/embed the matching helper with the app.
 
 The persisted `phoneAccess.allowScreenViewing` setting (**Allow phone to view
-this Mac's screen**, Server → Overview → Phone access) defaults to false.
+this Mac's screen**, Server → Overview → Keep my AI reachable) defaults to false.
 Turning Phone access off clears it. It expires seven days after enabling or the
 last successful frame (`phoneAccess.screenLastUsed`); denied/failed requests do
 not renew it. An expired or legacy undated grant is cleared on startup.

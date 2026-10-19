@@ -74,6 +74,7 @@ struct SettingsSearchSelfFindProbe {
 
             ("Show animated avatar", "settings.chat.animatedAvatar"),
             ("Phone access", "server.phoneAccess"),
+            ("Keep my AI reachable", "server.phoneAccess"),
             ("Allow phone to view this Mac's screen", "server.phoneAccess.screen"),
             ("screen expiry", "server.phoneAccess.screen"),
             ("screen overlay", "server.phoneAccess.screen"),

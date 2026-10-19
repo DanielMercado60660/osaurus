@@ -93,7 +93,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // (e.g. the `Settings { EmptyView() }` placeholder) or that flip
             // surfaces as a one-frame flash of an unrelated window.
             let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
-            NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
+            NSApp.setActivationPolicy((hideDockIcon || UserDefaults.standard.bool(forKey: "phoneAccess.enabled")) ? .accessory : .regular)
 
             // close (and watch for re-presents of) the SwiftUI managed
             // `Settings { EmptyView() }` placeholder window. our real settings
@@ -186,7 +186,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // `applicationWillFinishLaunching`.
         if #unavailable(macOS 26.0) {
             let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
-            NSApp.setActivationPolicy(hideDockIcon ? .accessory : .regular)
+            NSApp.setActivationPolicy((hideDockIcon || UserDefaults.standard.bool(forKey: "phoneAccess.enabled")) ? .accessory : .regular)
         }
 
         // A first-time redeem code is valid only when redemption is the
@@ -370,6 +370,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Recover skipped subsystems if a degraded (safe-mode) launch turns
         // out healthy (clean /health). See `LaunchGuard.noteHealthyHealthCheck`.
         setupSafeModeRecovery()
+
+        PhoneReachabilityService.shared.start(phone: .shared, startAtLogin: serverController.configuration.startAtLogin)
 
         // Apply saved Start at Login preference on launch
         let launchedByCLI = ProcessInfo.processInfo.arguments.contains("--launched-by-cli")
@@ -1021,7 +1023,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     /// Launches that should come up silently in the menu bar with no window:
-    /// a Start-at-Login launch (parent process is loginwindow; login-item
+    /// phone-access launches, a Start-at-Login launch (parent process is loginwindow; login-item
     /// launches still report `NSApplicationLaunchIsDefaultLaunchKey`, so the
     /// default-launch check alone can't catch them) and a launch triggered by
     /// the CLI, which only needs the server running. Inconclusive parent
@@ -1029,6 +1031,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// Must be evaluated during `applicationDidFinishLaunching`; the current
     /// AppleEvent that carries `keyAELaunchedAsLogInItem` is only valid there.
     private var isSilentLaunch: Bool {
+        if TailscalePhoneAccessService.shared.enabled { return true }
         if ProcessInfo.processInfo.arguments.contains("--launched-by-cli") {
             return true
         }
@@ -1635,6 +1638,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        PhoneReachabilityService.shared.stop()
         TailscalePhoneAccessService.shared.stop()
         NSLog("Osaurus server app terminating")
         PluginRepositoryService.shared.stopBackgroundRefresh()

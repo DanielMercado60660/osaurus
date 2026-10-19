@@ -147,7 +147,7 @@ struct ConfigurationView: View {
 
             SettingsToggle(
                 title: L("Start at Login"),
-                description: "Launch Osaurus when you sign in",
+                description: "Launch Osaurus when you sign in. Also required while Keep my AI reachable is on.",
                 anchorId: "settings.general.login",
                 isOn: $tempStartAtLogin
             )

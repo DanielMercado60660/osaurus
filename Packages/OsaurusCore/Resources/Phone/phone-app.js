@@ -1,5 +1,17 @@
 'use strict';
 const $ = id => document.getElementById(id);
+let phoneInitialized=false, initializingPhone=false;
+let phoneStorage;try { phoneStorage=window.localStorage; } catch {}
+const connection=new PhoneConnection({fetcher:globalThis.fetch.bind(globalThis),storage:phoneStorage,
+  changed:message=>{$('connection-status').textContent=message;$('connection-status').hidden=!message;},
+  recovered:()=>{if(!phoneInitialized&&!initializingPhone)void initializePhone();else if(!busy)status('Connected. Ready to retry.');}
+});
+const phoneFetch=(...args)=>connection.fetch(...args);
+window.addEventListener('online',()=>connection.resume());
+window.addEventListener('offline',()=>connection.failed());
+window.addEventListener('pagehide',()=>connection.stop());
+window.addEventListener('pageshow',()=>connection.resume());
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)connection.resume();});
 let history = [], controller, recording, micStream, holding = false, busy = false;
 let audioContext, speechQueue, speakerEnabled=false, talkActive=false, talkController;
 const agentsByID=new Map();
@@ -55,7 +67,7 @@ async function openModelPicker() {
   $('model-list').replaceChildren();$('model-status').textContent='Loading models…';
   $('model-reload').hidden=true;$('model-picker').showModal();
   try {
-    const catalog=await (await checked(await fetch('/models/picker',{cache:'no-store'}))).json();
+    const catalog=await (await checked(await phoneFetch('/models/picker',{cache:'no-store'}))).json();
     if(version!==pickerVersion||agent!==$('agents').value)return;
     const groups=phoneModelGroups(catalog);
     $('model-status').textContent=groups.length?'Choosing a model saves this agent’s default on the Mac.':'No models available. Add a model on your Mac, then reload.';
@@ -82,7 +94,7 @@ async function saveAgentModel(agent,model,version) {
   modelSaving=true;setBusy(busy);$('model-close').disabled=true;$('model-reload').disabled=true;
   $('model-list').disabled=true;$('model-status').textContent='Saving model…';
   try {
-    const response=await fetch(`/agents/${encodeURIComponent(agent)}/model`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model})});
+    const response=await phoneFetch(`/agents/${encodeURIComponent(agent)}/model`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model})});
     if(response.status===404) {
       modelUnavailableAgents.add(agent);
       status('This agent’s model cannot be changed here. Choose another agent or configure it on the Mac.');
@@ -158,7 +170,7 @@ $('speaker').onclick=async()=>{
     voiceButtons();
   }catch(error){status(error.message);}
 };
-const status = message => { $('status').textContent = message; };
+const status = message => { $('status').textContent = connection.offline ? connection.message() : message; };
 // Small safe Markdown subset: all text is created as DOM text nodes. Raw HTML
 // is never interpreted. Links permit http(s) only, never javascript/data URLs.
 function inline(parent, text) {
@@ -217,13 +229,13 @@ async function sendMessage(text=$('prompt').value.trim(),retryOutput=null) {
   const release=new SentenceRelease();let speechTimer, success=false, queue=null;
   const speak=sentences=>{if(speakerEnabled)for(const sentence of sentences)queue?.enqueue(sentence);};
   try {
-    queue=speakerEnabled?new PhoneSpeechQueue(audioContext,fetch,()=>status('Speaking…'), playback=>{
+    queue=speakerEnabled?new PhoneSpeechQueue(audioContext,phoneFetch,()=>status('Speaking…'), playback=>{
       companionMood({thinking:true,speaking:playback.speaking,outputLevel:playback.level});
       companion.setCaption(playback.text);
     }):null;
     speechQueue=queue;
     if(queue)speechTimer=setInterval(()=>speak(release.release()),50);
-    const response=await checked(await fetch(`/agents/${encodeURIComponent(agent)}/run`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:turn,stream:true}),signal:controller.signal}));
+    const response=await checked(await phoneFetch(`/agents/${encodeURIComponent(agent)}/run`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:turn,stream:true}),signal:controller.signal}));
     const reader=response.body.getReader(), decoder=new TextDecoder(); let buffer='';
     function frame(raw) {
       const data=raw.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
@@ -242,7 +254,7 @@ async function sendMessage(text=$('prompt').value.trim(),retryOutput=null) {
     await queue?.finish();
     if(controller.signal.aborted)throw new DOMException('Stopped','AbortError');
     history=[...turn,{role:'assistant',content:answer}]; success=true;status('Ready');companionMood({});companion.react('happy');
-  } catch(error) { controller?.abort(); queue?.interrupt(); companionError(error);status(error.name==='AbortError'?'Stopped. Partial reply was not added to history.':error.message); if(!answer) {
+  } catch(error) { if(error.name==='TypeError')connection.failed(); controller?.abort(); queue?.interrupt(); companionError(error);status(error.name==='AbortError'?'Stopped. Partial reply was not added to history.':error.message); if(!answer) {
     if(error.name!=='AbortError'&&/this agent has no model configured/i.test(error.message)) {
       pendingRetry={agent,text,output,ready:false};renderModelRetry();
       status('Choose a model, then resend your message.');
@@ -267,7 +279,7 @@ $('talk').onclick=async()=>{
       if(signal.aborted)break;
       status('Thinking…');companionMood({thinking:true});setBusy(true);
       const form=new FormData();form.append('file',clip,clip.type.includes('mp4')?'recording.m4a':'recording.webm');
-      const result=await (await checked(await fetch('/audio/transcriptions',{method:'POST',body:form,signal}))).json();
+      const result=await (await checked(await phoneFetch('/audio/transcriptions',{method:'POST',body:form,signal}))).json();
       if(signal.aborted)break;
       setBusy(false);
       if(!result.text?.trim())continue;
@@ -296,7 +308,7 @@ $('mic').addEventListener('pointerdown',async event=>{
       controller=new AbortController(); setBusy(true); status('Transcribing…');
       try {
         const form=new FormData(); form.append('file',new Blob(chunks,{type:recording.mimeType}),recording.mimeType.includes('mp4')?'recording.m4a':'recording.webm');
-        const result=await (await checked(await fetch('/audio/transcriptions',{method:'POST',body:form,signal:controller.signal}))).json();
+        const result=await (await checked(await phoneFetch('/audio/transcriptions',{method:'POST',body:form,signal:controller.signal}))).json();
         $('prompt').value=[$('prompt').value,result.text||''].filter(Boolean).join(' ');status('Review the transcript, then Send.');
       } catch(error){status(error.name==='AbortError'?'Transcription stopped.':error.message);} finally{controller=null;setBusy(false);}
     };
@@ -305,19 +317,26 @@ $('mic').addEventListener('pointerdown',async event=>{
 });
 for(const event of ['pointerup','pointercancel','lostpointercapture']) $('mic').addEventListener(event,stopRecording);
 document.addEventListener('visibilitychange',()=>{if(document.hidden){stopVoice();stopRecording();}});
-(async()=>{
+async function initializePhone() {
+  if(initializingPhone)return;
+  initializingPhone=true;
   try {
-    const data=await (await checked(await fetch('/agents'))).json();
+    const data=await (await checked(await phoneFetch('/agents'))).json();
     for(const agent of data.agents||[])agentsByID.set(agent.id,agent);
     populateAgents();
     companion.setAgent(agentsByID.get($('agents').value));
     status($('agents').options.length?'Ready':'Create an agent on your Mac first.');
-    const capabilities=await (await checked(await fetch('/phone/capabilities'))).json();
+    const capabilities=await (await checked(await phoneFetch('/phone/capabilities'))).json();
     $('mic').hidden=!(capabilities.transcription&&window.isSecureContext&&navigator.mediaDevices?.getUserMedia&&window.MediaRecorder);
     $('speaker').hidden=!(capabilities.speech&&(window.AudioContext||window.webkitAudioContext));
     $('talk').hidden=$('mic').hidden||$('speaker').hidden;
     if(!window.isSecureContext)$('voice-hint').textContent='Microphone requires HTTPS. Open the HTTPS phone URL from the Mac to use voice input.';
     voiceButtons();
-    if('serviceWorker' in navigator&&window.isSecureContext) navigator.serviceWorker.register('/phone/sw.js',{scope:'/phone/'}).catch(()=>{});
+    phoneInitialized=true;
   } catch(error){status(error.message);}
-})();
+  finally { initializingPhone=false; }
+}
+// Install the offline shell even if initial agent loading fails.
+if('serviceWorker' in navigator&&window.isSecureContext) navigator.serviceWorker.register('/phone/sw.js',{scope:'/phone/'}).catch(()=>{});
+void initializePhone();
+connection.watch();
