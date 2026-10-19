@@ -70,12 +70,26 @@ struct PhoneAccessState: Equatable, Sendable {
 final class PhoneAccessTrust: @unchecked Sendable {
     static let shared = PhoneAccessTrust()
     static let secretHeader = "X-Osaurus-Phone-Secret"
+    static let loginHeader = "X-Osaurus-Phone-Login"
     static let deviceHeader = "X-Osaurus-Phone-Device"
     static let originHeader = "X-Osaurus-Phone-Origin"
     private let lock = NSLock()
     private var secret: String?
+    private var ownerLogin: String?
 
-    func replace(with value: String?) { lock.lock(); defer { lock.unlock() }; secret = value }
+    func replace(with value: String?) {
+        lock.lock(); defer { lock.unlock() }
+        secret = value; ownerLogin = nil
+    }
+    func setOwnerLogin(_ value: String) {
+        lock.lock(); defer { lock.unlock() }
+        ownerLogin = value.isEmpty ? nil : value.lowercased()
+    }
+    func acceptsOwner(_ login: String?) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let ownerLogin, let login, !login.isEmpty else { return false }
+        return login.lowercased() == ownerLogin
+    }
     func accepts(_ candidate: String?, physicalLoopback: Bool) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard physicalLoopback, let secret, let candidate, secret.utf8.count >= 32 else { return false }

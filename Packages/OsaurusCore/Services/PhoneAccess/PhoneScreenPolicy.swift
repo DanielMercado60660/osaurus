@@ -9,10 +9,11 @@ struct PhoneScreenCaller: Sendable {
     var relay: Bool
     var hasAuthorization: Bool
     var secureChannel: Bool = false
+    var login: String? = nil
 
     func verifiedDevice(using trust: PhoneAccessTrust) -> String? {
         guard marker == "1", !relay, !hasAuthorization, !secureChannel,
-            trust.accepts(secret, physicalLoopback: physicalLoopback),
+            trust.accepts(secret, physicalLoopback: physicalLoopback), trust.acceptsOwner(login),
             let deviceID, !deviceID.isEmpty, deviceID.utf8.count <= 256,
             deviceID.utf8.allSatisfy({ $0 > 32 && $0 < 127 })
         else { return nil }
@@ -87,9 +88,68 @@ struct PhoneScreenAudit: Equatable, Sendable {
     let errorCode: String?
     var method: String = "GET"
     var durationMs: Double = 0
+    var event: String = "screen request rejected"
+    var count: Int = 1
     var details: [String: String] {
         var result = ["phone_device_id": deviceID ?? "unverified", "display": "main", "screen_bytes": String(bytes)]
+        result["event"] = event
+        result["request_count"] = String(count)
         if let errorCode { result["error_code"] = errorCode }
         return result
+    }
+}
+
+/// Per-device rejection rows, including 429s, are bounded independently of captures.
+struct PhoneScreenAuditThrottle {
+    private var last: [String: TimeInterval] = [:]
+    mutating func shouldRecord(device: String, now: TimeInterval) -> Bool {
+        last = last.filter { now - $0.value < 60 }
+        guard last[device] == nil else { return false }
+        last[device] = now
+        return true
+    }
+}
+
+struct PhoneScreenSession {
+    var lastFrame: TimeInterval?
+    var lastAudit: TimeInterval
+    var frames = 0
+    var bytes = 0
+    func isNew(now: TimeInterval) -> Bool { now - (lastFrame ?? lastAudit) > 60 }
+}
+
+/// One process-wide counter/timer, never one task or main-actor hop per rejection.
+/// The lock also bounds bursts arriving on different NIO event loops.
+final class PhoneScreenRejections: @unchecked Sendable {
+    static let shared = PhoneScreenRejections { count in
+        Task { @MainActor in
+            try? await PhoneScreenActivityLogger.record(PhoneScreenAudit(
+                deviceID: nil, status: 403, bytes: 0, errorCode: "phone_owner_required",
+                event: "rejected \(count) unverified screen requests", count: count))
+        }
+    }
+    private let lock = NSLock()
+    private var count = 0
+    private var scheduled = false
+    private let schedule: @Sendable (@escaping @Sendable () -> Void) -> Void
+    private let emit: @Sendable (Int) -> Void
+    init(schedule: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void = {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60, execute: $0)
+    }, emit: @escaping @Sendable (Int) -> Void) {
+        self.schedule = schedule; self.emit = emit
+    }
+    func reject() {
+        lock.lock()
+        count = count == Int.max ? count : count + 1
+        let needsTimer = !scheduled
+        scheduled = true
+        lock.unlock()
+        if needsTimer { schedule { [self] in flush() } }
+    }
+    private func flush() {
+        lock.lock()
+        let total = count; count = 0; scheduled = false
+        lock.unlock()
+        if total > 0 { emit(total) }
     }
 }

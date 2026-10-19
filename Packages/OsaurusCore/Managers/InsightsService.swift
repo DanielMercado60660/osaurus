@@ -85,6 +85,7 @@ final class InsightsService: ObservableObject {
 
     private let store: ActivityLogStore
     private var storeAvailable = false
+    private var durableAppendFailed = false
     private var pagesLoaded = 1
     private var cancellables = Set<AnyCancellable>()
     /// Fired on every append / clear so the dashboard refreshes (debounced).
@@ -179,8 +180,32 @@ final class InsightsService: ObservableObject {
                 }
             } catch {
                 NSLog("[Osaurus][Insights] append failed: %@", "\(error)")
-                await MainActor.run { [weak self] in self?.storeError = error.localizedDescription }
+                await MainActor.run { [weak self] in
+                    self?.storeError = error.localizedDescription
+                    self?.durableAppendFailed = true
+                }
             }
+        }
+    }
+
+    /// Security-sensitive egress must await a committed store append, not the hot cache.
+    var durableStoreAvailable: Bool { storeAvailable && !durableAppendFailed && store.isOpen }
+
+    func logDurably(_ request: RequestLog) async throws {
+        guard durableStoreAvailable else { throw ActivityLogStoreError.notOpen }
+        let record = settings.storeContent ? request : request.withoutContent()
+        let store = self.store
+        do {
+            let chained = try await Task.detached(priority: .utility) { try store.append(record, durable: true) }.value
+            logs.insert(chained, at: 0)
+            totalRequestCountRaw += 1
+            if logs.count > maxLogCount { logs.removeLast(logs.count - maxLogCount) }
+            hasLogs = true
+            changed.send()
+        } catch {
+            durableAppendFailed = true
+            storeError = error.localizedDescription
+            throw error
         }
     }
 

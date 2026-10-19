@@ -130,4 +130,66 @@ struct ActivityLogSettingsTests {
         #expect(try store.count() == 2)
         #expect(try store.verify().isIntact)
     }
+    @Test("durable logging returns only after the chained row is stored")
+    @MainActor func durableAuditCommits() async throws {
+        let store = ActivityLogStore()
+        try store.openInMemory()
+        let service = InsightsService(store: store, openStore: false)
+        let request = RequestLog(source: .httpAPI, method: "GET", path: "/phone/api/screen", statusCode: 200, durationMs: 0)
+        try await service.logDurably(request)
+        #expect(try store.count() == 1)
+        #expect(try store.fetch().first?.id == request.id)
+        #expect(service.logs.first?.hash != nil)
+        #expect(try store.verify().isIntact)
+    }
+
+    @Test("unavailable and failed durable writes are surfaced without hot-cache success")
+    @MainActor func durableAuditFailsClosed() async throws {
+        let request = RequestLog(source: .httpAPI, method: "GET", path: "/phone/api/screen", statusCode: 200, durationMs: 0)
+        let closed = InsightsService(store: ActivityLogStore(), openStore: false)
+        #expect(!closed.durableStoreAvailable)
+        await #expect(throws: (any Error).self) { try await closed.logDurably(request) }
+        #expect(closed.logs.isEmpty)
+        let store = ActivityLogStore()
+        try store.openInMemory()
+        let service = InsightsService(store: store, openStore: false)
+        try store.executeForTesting("CREATE TRIGGER fail_append BEFORE INSERT ON activity BEGIN SELECT RAISE(ABORT, 'test disk failure'); END")
+        await #expect(throws: (any Error).self) { try await service.logDurably(request) }
+        #expect(!service.durableStoreAvailable)
+        #expect(service.storeError != nil)
+        #expect(service.logs.isEmpty)
+        #expect(try store.count() == 0)
+    }
+
+    @Test("durable append uses FULL synchronization and restores the prior mode")
+    @MainActor func durableAuditUsesFullSync() async throws {
+        let store = ActivityLogStore()
+        try store.openInMemory()
+        try store.executeForTesting("PRAGMA synchronous = NORMAL")
+        try store.executeForTesting("""
+            CREATE TRIGGER require_full BEFORE INSERT ON activity
+            WHEN (SELECT synchronous FROM pragma_synchronous) != 2
+            BEGIN SELECT RAISE(ABORT, 'append was not FULL'); END
+            """)
+        let service = InsightsService(store: store, openStore: false)
+        let request = RequestLog(source: .httpAPI, method: "GET", path: "/phone/api/screen", statusCode: 200, durationMs: 0)
+        try await service.logDurably(request)
+        #expect(try store.count() == 1)
+        // The ordinary append is back at NORMAL and therefore trips the trigger.
+        #expect(throws: (any Error).self) { try store.append(request) }
+        #expect(try store.count() == 1)
+    }
+
+    @Test("an asynchronous ordinary append failure also revokes durable screen admission")
+    @MainActor func ordinaryAppendFailureRevokesDurableAdmission() async throws {
+        let store = ActivityLogStore()
+        try store.openInMemory()
+        let service = InsightsService(store: store, openStore: false)
+        try store.executeForTesting("CREATE TRIGGER fail_append BEFORE INSERT ON activity BEGIN SELECT RAISE(ABORT, 'test disk failure'); END")
+        service.log(RequestLog(source: .httpAPI, method: "GET", path: "/health", statusCode: 200, durationMs: 0))
+        for _ in 0..<100 where service.storeError == nil { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(service.storeError != nil)
+        #expect(!service.durableStoreAvailable)
+    }
+
 }

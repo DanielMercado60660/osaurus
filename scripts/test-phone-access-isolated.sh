@@ -44,9 +44,14 @@ struct SharedArtifact: Sendable, Equatable {
 struct EgressInfo {
     let destinationLabel: String?; let bytesSent: Int?; let dataClasses: [String]; let details: [String: String]
 }
-enum InsightsService {
+struct RequestLog {
     enum Source { case httpAPI }
-    static func logRequest(source: Source, method: String, path: String, statusCode: Int, durationMs: Double, egress: EgressInfo) {}
+    init(source: Source, method: String, path: String, statusCode: Int, durationMs: Double, egress: EgressInfo) {}
+}
+@MainActor final class InsightsService {
+    static let shared = InsightsService()
+    var durableStoreAvailable: Bool { false }
+    func logDurably(_ request: RequestLog) async throws { throw CocoaError(.fileWriteUnknown) }
 }
 func L(_ text: String) -> String { text }
 enum SystemPermission { case calendar, reminders, contacts, notes, automationMail, disk, automationMessages, location, automationMusic }

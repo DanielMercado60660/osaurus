@@ -32,6 +32,7 @@ import (
 
 const ownerHeader = "X-Osaurus-Phone-Secret"
 const originHeader = "X-Osaurus-Phone-Origin"
+const loginHeader = "X-Osaurus-Phone-Login"
 const deviceHeader = "X-Osaurus-Phone-Device"
 
 type identity struct {
@@ -47,6 +48,7 @@ type deviceStatus struct {
 	Allowed  bool   `json:"allowed"`
 }
 type accessPolicy struct {
+	ownerLogin      string
 	hosts           map[string]bool
 	restrictDevices bool
 	devices         map[string]bool
@@ -121,6 +123,10 @@ func authorize(next http.Handler, lookup identityLookup, logins []string, secret
 			http.Error(w, "Forbidden", 403)
 			return
 		}
+		if r.URL.Path == "/phone/api/screen" && (policy.ownerLogin == "" || !strings.EqualFold(peer.Login, policy.ownerLogin)) {
+			http.Error(w, "Screen access requires the node owner", http.StatusForbidden)
+			return
+		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
 			scheme := "http"
@@ -142,6 +148,7 @@ func authorize(next http.Handler, lookup identityLookup, logins []string, secret
 		r.Header.Del(ownerHeader)
 		r.Header.Del(originHeader)
 		r.Header.Del(deviceHeader)
+		r.Header.Del(loginHeader)
 		r.Header.Del("Authorization")
 		r.Header.Del("Forwarded")
 		r.Header.Del("X-Forwarded-For")
@@ -150,6 +157,7 @@ func authorize(next http.Handler, lookup identityLookup, logins []string, secret
 		r.Header.Set(ownerHeader, secret)
 		r.Header.Set(originHeader, "1")
 		r.Header.Set(deviceHeader, peer.StableID)
+		r.Header.Set(loginHeader, peer.Login)
 		granted = true
 		report(true) // Report admission immediately, even for a long streaming response.
 		next.ServeHTTP(w, r)
@@ -294,18 +302,21 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	owner := ""
+	if st.Self != nil {
+		owner = st.User[st.Self.UserID].LoginName
+	}
 	logins := strings.Split(os.Getenv("OSAURUS_PHONE_LOGINS"), ",")
 	if strings.TrimSpace(os.Getenv("OSAURUS_PHONE_LOGINS")) == "" {
-		if st.Self == nil {
-			return errors.New("node has no owner; configure allowed logins")
-		}
-		owner := st.User[st.Self.UserID].LoginName
 		if owner == "" {
 			return errors.New("node has no login owner; configure allowed logins")
 		}
 		logins = []string{owner}
 	}
-	emit("owner_login", strings.Join(logins, ","))
+	// This is the actual node owner, never the configured chat allowlist.
+	if owner != "" {
+		emit("owner_login", owner)
+	}
 	scheme := "https"
 	var listener net.Listener
 	if len(st.CertDomains) > 0 {
@@ -370,6 +381,7 @@ func run() error {
 		}
 	}
 	policy := accessPolicy{hosts: acceptableHosts(st), restrictDevices: os.Getenv("OSAURUS_PHONE_RESTRICT_DEVICES") == "1", devices: devices, report: emitDevice}
+	policy.ownerLogin = owner
 	server := &http.Server{Handler: authorize(proxy, lookup, logins, secret, policy), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 * 1024}
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	emit("dns_name", host)

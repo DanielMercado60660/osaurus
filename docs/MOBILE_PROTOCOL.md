@@ -35,30 +35,51 @@ There is no screenshot file/artifact or input-injection endpoint.
 
 Admission requires **all** of: physical loopback, `X-Osaurus-Phone-Origin: 1`,
 the live `X-Osaurus-Phone-Secret` capability, a nonempty bounded
-`X-Osaurus-Phone-Device` StableID, no relay marker, no Authorization header and
+`X-Osaurus-Phone-Device` StableID, a helper-set `X-Osaurus-Phone-Login` matching
+the actual tailnet node owner (case-insensitive), no relay marker, no Authorization header and
 no Secure Channel envelope. The helper strips client-supplied identity and
-credential headers (including duplicates), then sets the device header from
+credential headers (including duplicates), then sets the device and login headers from
 WhoIs after the login/device policy passes. Browser JavaScript MUST NOT send or
 receive the launch secret. Generic loopback trust, owner/agent API keys and
 paired/public-relay clients never authorize this endpoint. Stale helpers without
-the device header fail closed; build/embed the matching helper with the app.
+the device or login header fail closed; build/embed the matching helper with the app.
 
 The persisted `phoneAccess.allowScreenViewing` setting (**Allow phone to view
 this Mac's screen**, Server → Overview → Phone access) defaults to false.
+Turning Phone access off clears it. It expires seven days after enabling or the
+last successful frame (`phoneAccess.screenLastUsed`); denied/failed requests do
+not renew it. An expired or legacy undated grant is cleared on startup.
 Screen Recording must also be granted. Revoking either the setting or helper
 capability during a capture discards its bytes. One capture may be outstanding
 per device and capture starts MUST be at least 500 ms apart. `429` includes
 `Retry-After: 1`. The bundled page polls about once per second, coalesces
 completion-triggered refreshes, slows errors to five-second retries, aborts on
 hidden/pagehide/Chat, discards late frames and releases blob URLs. Successful
-pixels remain only in memory while visible. The Mac menu-bar viewing indicator
-expires five seconds after the last frame (and clears immediately on disable).
+pixels remain only in memory while visible. The Mac menu-bar indicator and
+non-activating overlay on the active display expire five seconds after the last
+frame (and clear immediately on disable). Each device/session's first successful
+frame posts a notification, repeated after more than 60 seconds idle. Delivery
+is subject to existing macOS notification permission; the overlay is unconditional.
+
+The event-loop screen predicate rejects unverified callers without a request task
+or MainActor hop. One global timer coalesces them into at most one rejection count
+per minute. Verified rejection rows, including 429s, are capped per device/minute.
+Before capture, a durable Insights store must be available and a new session's
+`screen view started (device …)` row must have completed its durable append.
+Subsequent frames produce periodic summaries (at most once per minute per device)
+with the preceding interval's counts/bytes. Loss of storage or an append error
+stops the session and returns `503 audit_unavailable`; pixels are discarded if
+storage becomes unavailable during capture. Summary counts are not exact delivery
+receipts, and an interval ending before the next periodic row is not flushed.
+The helper reports the real node owner's login separately from the chat allowlist;
+allowed non-owner logins retain chat access but cannot use this route.
 
 Errors use `{"error":{"code":"…","message":"…"}}`:
 
 | HTTP | Code | Meaning |
 | --- | --- | --- |
-| 403 | `phone_owner_required` | Caller is not helper-verified with device identity. |
+| 403 | `phone_owner_required` | Caller is not helper-verified as the node owner with device identity. |
+| 503 | `audit_unavailable` | Durable Insights storage/append failed; viewing stopped. |
 | 403 | `screen_disabled` | The Mac's screen-sharing switch is off. |
 | 403 | `screen_permission_missing` | Screen Recording is unavailable/revoked. |
 | 403 | `screen_revoked` | Setting/helper access changed during capture. |
