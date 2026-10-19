@@ -56,6 +56,20 @@ endOfTurn → thinking → speaking → listening …`, with:
   category `talk.mode`), and keep the last 50 turns in memory with a p50/p90
   accessor (used by the debug overlay and by `fork/metrics`).
 
+## Known latency gaps in T01 to fix here
+
+- T01's incremental chunker keeps the last chunk open to preserve
+  `TTSTextChunker.split`'s 240-character grouping, so the **first sentence is
+  not released until ~240 chars or `finish()`**. Add a low-latency release
+  policy for talk mode (option on `beginStream`): release the first complete
+  sentence immediately (or first clause ≥ ~40 chars at a comma/semicolon when
+  no sentence end arrives within ~500 ms), then group subsequent sentences
+  normally. Default (non-talk) behavior unchanged.
+- `ChatSession.assistantDeltas` fires at the UI smooth-streaming **reveal
+  cadence** (`StreamingDeltaProcessor.onVisibleDelta`). Measure whether the
+  pacer adds delay vs raw engine deltas; if it does, add a raw visible-content
+  hook before the pacer for talk mode.
+
 ## Deliverables
 
 1. `Services/Voice/TalkModeController.swift` (`@MainActor` singleton) with the
@@ -73,7 +87,7 @@ endOfTurn → thinking → speaking → listening …`, with:
    shortcut; a compact state indicator (listening / thinking / speaking) with
    live captions of the user's partial transcript. Expose `TalkModeController.shared.state`
    so the animated avatar (`AvatarStateModel`, task T02) can follow it —
-   wire it if T02 is merged, otherwise leave a clearly marked hook.
+   wire it if T02 is merged, otherwise leave a clearly marked hook. (T02 **is** merged: also replace the `TODO(T01)` in `Services/Avatar/AvatarStateModel.swift` so `DefaultAvatarAudioLevelSource.outputLevel` reads `TTSService.shared.outputLevel`, and make the avatar show `listening` while talk mode is listening.)
 5. Docs: a "Talk mode" section in `docs/VOICE_INPUT.md`.
 
 ## Tests
