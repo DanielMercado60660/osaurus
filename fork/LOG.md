@@ -36,3 +36,27 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   (strip, drop coverage) rather than runtime rewrites.
 - Codex running: T01 voice plumbing, T02 animated avatar, T04 Tailscale phone
   access (each in `~/osaurus-wt/<task>`, logs in `~/osaurus-wt/_logs`).
+
+## 2026-10-18 (late)
+
+- Codex can implement but cannot build/test the full app or (sometimes) commit
+  inside its sandbox (nested sandbox-exec, Metal toolchain). Workflow: Codex
+  implements in a worktree → Claude commits/merges into `fork/main` and builds.
+  Shared rules in `fork/tasks/CODEX_PREAMBLE.md` (incl. no keychain prompts:
+  `--disable-keychain`, git credential helper disabled).
+- Merged into fork/main: T02 animated avatar (procedural dinosaur, 5 moods,
+  floating companion, setting), T01 voice plumbing (incremental TTS stream,
+  output level, STT events, chat delta publisher; 26 focused tests pass in
+  Codex's run), T04 Tailscale phone access (tsnet Go helper + /phone web chat).
+- Security review of T04: no allowlist bypass; DNS-rebinding hole in HTTP
+  fallback (Host not validated) + hardening items → T04b running.
+- Onboarding survey: upstream already 2–4 clicks to first chat, recommends
+  Raptor 0.6 4B on 16 GB. Fork adds a post-onboarding "Make it yours" card
+  (T05, after T03) instead of changing onboarding.
+- Makefile: coverage instrumentation turned off for make cli/app (it leaked
+  into local Release builds as a 20 MB __LLVM_COV segment). Note: shipped
+  upstream builds are archived and stripped, so the 508 MB local bundle is not
+  what users download; compare like with like.
+- Running: T03 talk mode (Codex), T04b hardening (Codex), fork build.
+- Open questions to owner: OK to download Raptor 0.6 (~3.7 GB) for evals?
+  Use Tripo plugin (spends credits) for a 3D avatar?
