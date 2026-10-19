@@ -17592,7 +17592,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
         let data = stateRef.value.requestBodyBuffer.map { Data($0.readableBytesView) } ?? Data()
-        let writer = AudioSpeechWriter(context: context, version: head.version, cors: stateRef.value.corsHeaders)
+        let writer = AudioSpeechWriter(
+            context: NIOLoopBound(context, eventLoop: context.eventLoop), loop: context.eventLoop,
+            version: head.version, cors: stateRef.value.corsHeaders)
         let contentType = head.headers.first(name: "Content-Type")?.split(separator: ";").first?
             .trimmingCharacters(in: .whitespaces).lowercased()
         runRequestTask(priority: .userInitiated) {

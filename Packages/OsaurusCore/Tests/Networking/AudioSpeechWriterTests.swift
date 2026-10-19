@@ -15,7 +15,9 @@ struct AudioSpeechWriterTests {
         try await channel.connect(to: SocketAddress(ipAddress: "127.0.0.1", port: 1)).get()
         let writer = try await channel.eventLoop.submit {
             let context = try channel.pipeline.syncOperations.context(handlerType: Probe.self)
-            return AudioSpeechWriter(context: context, version: .http1_1, cors: [])
+            return AudioSpeechWriter(
+                context: NIOLoopBound(context, eventLoop: context.eventLoop), loop: context.eventLoop,
+                version: .http1_1, cors: [])
         }.get()
         return (channel, writer)
     }

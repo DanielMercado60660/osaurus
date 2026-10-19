@@ -12,9 +12,9 @@ actor AudioSpeechWriter {
     private let cors: [(String, String)]
     private var started = false
 
-    init(context: ChannelHandlerContext, version: HTTPVersion, cors: [(String, String)]) {
-        self.loop = context.eventLoop
-        self.context = NIOLoopBound(context, eventLoop: context.eventLoop)
+    init(context: NIOLoopBound<ChannelHandlerContext>, loop: EventLoop, version: HTTPVersion, cors: [(String, String)]) {
+        self.loop = loop
+        self.context = context
         self.version = version
         self.cors = cors
     }
