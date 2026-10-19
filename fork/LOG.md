@@ -124,3 +124,11 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   audit required, owner-login only, overlay + notification indicator, setting
   auto-reset) merged.
 - Fork README drafted (`fork/README.md`).
+- Live check of T14 on a fresh profile: header shows "Model: Choose a model";
+  the sheet lists the Mac's discovered local models (HF cache + LM Studio);
+  picking Qwen3.5 4B saves the agent default ("Model saved.") and the next
+  phone message streams a Markdown reply. Nit: the button shows the raw model
+  id rather than the display name.
+- Upstream check: 0 new commits on upstream/main since the fork point.
+  `fork/sync-upstream.sh` added (merge → build → deterministic evals on a
+  `sync/upstream` branch).
