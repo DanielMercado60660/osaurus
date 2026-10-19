@@ -9,6 +9,9 @@ PROJECT := App/osaurus.xcodeproj
 WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
+# Release builds must not carry coverage instrumentation (Xcode defaults it on
+# for some environments; it adds an __LLVM_COV segment and runtime overhead).
+NO_COVERAGE_FLAGS := ENABLE_CODE_COVERAGE=NO CLANG_COVERAGE_MAPPING=NO
 
 .PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean ts-helper wa-helper wa-helper-release bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat evals-pr-report evals-pr-report-baseline evals-watcher-report evals-scoreboard
 
@@ -52,18 +55,18 @@ help:
 
 cli:
 	@echo "Building CLI ($(SCHEME_CLI))…"
-	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_CLI) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
+	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_CLI) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(NO_COVERAGE_FLAGS) $(XCODEBUILD_FLAGS)
 
 app: cli
 	@echo "Building app ($(SCHEME_APP))…"
-	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_APP) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
+	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_APP) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(NO_COVERAGE_FLAGS) $(XCODEBUILD_FLAGS)
 	@echo "Embedding CLI into App Bundle (Helpers)…"
 	# Copy osaurus-cli to osaurus.app/Contents/Helpers/osaurus
 	mkdir -p "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers"
 	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-cli" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
 	@echo "Building plugin host helper (osaurus-plugin-host)…"
-	xcodebuild -workspace $(WORKSPACE) -scheme osaurus-plugin-host -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
+	xcodebuild -workspace $(WORKSPACE) -scheme osaurus-plugin-host -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(NO_COVERAGE_FLAGS) $(XCODEBUILD_FLAGS)
 	@echo "Embedding plugin host helper into App Bundle (Helpers)…"
 	# Killable out-of-process native plugin host (see PluginProcessHost.swift).
 	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-plugin-host" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
