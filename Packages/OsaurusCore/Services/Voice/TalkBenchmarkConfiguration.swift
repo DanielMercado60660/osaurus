@@ -10,6 +10,7 @@ struct TalkBenchmarkConfiguration: Sendable {
     let leadingSilenceMs: Int
     let trailingSilenceMs: Int
     let bargeInAfterMs: Int?
+    let echo: TalkBenchmarkEchoConfiguration?
     let timeoutMs: Int
 
     static var inputRequested: Bool { ProcessInfo.processInfo.environment["OSAURUS_TALK_INPUT_WAV"] != nil }
@@ -36,11 +37,24 @@ struct TalkBenchmarkConfiguration: Sendable {
             }
             return number
         }
+        let echo: TalkBenchmarkEchoConfiguration?
+        if let db = env["OSAURUS_TALK_ECHO_DB"] {
+            guard let value = Float(db), value.isFinite, (-60...0).contains(value) else {
+                throw TalkBenchmarkError("OSAURUS_TALK_ECHO_DB must be finite in -60...0")
+            }
+            echo = try .init(decibels: value, delayMs: milliseconds("ECHO_DELAY_MS", default: 30, range: 0...1000))
+        } else {
+            guard env["OSAURUS_TALK_ECHO_DELAY_MS"] == nil else {
+                throw TalkBenchmarkError("ECHO_DELAY_MS requires ECHO_DB")
+            }
+            echo = nil
+        }
         return try Self(inputs: inputs, autostart: autostart,
             metricsURL: env["OSAURUS_TALK_METRICS_OUT"].map { try path($0, key: "METRICS_OUT") },
             leadingSilenceMs: milliseconds("LEADING_SILENCE_MS", default: 500, range: 0...30_000),
             trailingSilenceMs: milliseconds("TRAILING_SILENCE_MS", default: 1200, range: 0...30_000),
             bargeInAfterMs: env["OSAURUS_TALK_BARGE_IN_AFTER_MS"] == nil ? nil : milliseconds("BARGE_IN_AFTER_MS", default: 800, range: 0...30_000),
+            echo: echo,
             timeoutMs: milliseconds("TIMEOUT_MS", default: 180_000, range: 1000...3_600_000))
     }
 }
@@ -74,6 +88,45 @@ struct TalkWAVFramePacer: Sendable {
         return (0..<Self.frameSamples).map { offset in
             let source = start + offset
             return source >= 0 && source < sampleCount ? samples[source] : 0
+        }
+    }
+}
+
+struct TalkBenchmarkEchoConfiguration: Sendable {
+    let decibels: Float
+    let delayMs: Int
+    var gain: Float { pow(10, decibels / 20) }
+}
+
+/// Paced 24 kHz render PCM -> 16 kHz input, with an exact sample delay.
+/// The ring is bounded by the configured delay, not reply length. Render silence
+/// on pause/cancel drains the acoustic tail without replaying discarded output.
+struct TalkBenchmarkEchoMixer {
+    let config: TalkBenchmarkEchoConfiguration
+    private var delay: [Float]
+    private var cursor = 0
+    private(set) var mixedSamples = 0
+    init(config: TalkBenchmarkEchoConfiguration) {
+        self.config = config
+        delay = Array(repeating: 0, count: config.delayMs * 16)
+    }
+    mutating func mix(input: [Float], output24k: [Float]) -> [Float] {
+        input.enumerated().map { index, sample in
+            let position = Double(index) * 1.5
+            let lower = Int(position)
+            let fraction = Float(position - Double(lower))
+            let a = lower < output24k.count ? output24k[lower] : 0
+            let b = lower + 1 < output24k.count ? output24k[lower + 1] : a
+            let rendered = (a + (b - a) * fraction) * config.gain
+            let echoed: Float
+            if delay.isEmpty { echoed = rendered }
+            else {
+                echoed = delay[cursor]
+                delay[cursor] = rendered
+                cursor = (cursor + 1) % delay.count
+            }
+            if echoed != 0 { mixedSamples += 1 }
+            return min(1, max(-1, sample + echoed))
         }
     }
 }

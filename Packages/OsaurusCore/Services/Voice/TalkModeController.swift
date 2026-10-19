@@ -13,6 +13,11 @@ public final class TalkModeController: ObservableObject {
     @Published public private(set) var lastError: String?
     @Published public private(set) var configuration = TalkModeConfigurationStore.load()
     @Published public private(set) var aecActive = false
+    @Published public private(set) var aecOffReason = "Not started"
+    @Published public private(set) var echoRejectedSegments = 0
+    public var aecStatus: String {
+        aecActive ? "Echo cancellation: On (Apple voice processing)" : "Echo cancellation: Off — " + aecOffReason
+    }
     public private(set) var latency = TalkLatencyHistory()
     public private(set) var agentID: UUID?
     public private(set) var windowID: UUID?
@@ -42,6 +47,7 @@ public final class TalkModeController: ObservableObject {
     private var captionSubscription: AnyCancellable?
     private var ttsSubscription: AnyCancellable?
     private var configurationSubscription: AnyCancellable?
+    private var pendingSend: Task<Void, Never>?
     private var startup: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
     private var shouldResumeVAD = false
@@ -49,6 +55,10 @@ public final class TalkModeController: ObservableObject {
     private var benchmarkTask: Task<Void, Never>?
     private var benchmarkFinished = false
     private var benchmarkInterruptedRendering = false
+    private var benchmarkSelfBargeIns = 0
+    private var benchmarkTentativeSelfPauses = 0
+    private var benchmarkEchoSegmentsSent = 0
+    private var tentativeInterruptedRendering = false
 
     private init() {
         configurationSubscription = NotificationCenter.default.publisher(for: .voiceConfigurationChanged)
@@ -180,11 +190,12 @@ public final class TalkModeController: ObservableObject {
                     duplex: duplex, gate: gate, echoCancellation: self.configuration.echoCancellationEnabled)
                 try Task.checkCancellation()
                 self.aecActive = aec
+                self.aecOffReason = duplex.aecOffReason
                 self.isStarting = false
                 self.dispatch(.start(aec: aec))
-                self.logger.info("capture started aec=\(aec)")
+                self.logger.notice("capture started aec=\(aec)")
                 if !aec && self.configuration.echoCancellationEnabled && !duplex.usesFileInput {
-                    ToastManager.shared.info("Talk mode", message: "Echo cancellation is unavailable for this audio route; using the selected microphone and default speaker.")
+                    ToastManager.shared.info("Talk mode", message: self.aecStatus)
                 }
                 self.startTicker()
                 if let config = try TalkBenchmarkConfiguration.parse(ProcessInfo.processInfo.environment) {
@@ -270,7 +281,7 @@ public final class TalkModeController: ObservableObject {
         case .final(let segment, let text, let at):
             guard snapshot.segments.contains(segment) else { return }
             captureTiming.finals[segment] = at
-            dispatch(.final(segment: segment, text: text))
+            dispatch(.final(segment: segment, text: text, at: ProcessInfo.processInfo.systemUptime))
         case .smartTurnUnavailable(let message):
             ToastManager.shared.info("Smart end of turn unavailable", message: "Using silence detection. " + message)
         case .failed(let message): fail(message)
@@ -282,9 +293,10 @@ public final class TalkModeController: ObservableObject {
         case .aecChanged(let active):
             let wasActive = aecActive
             aecActive = active
+            aecOffReason = duplex?.aecOffReason ?? "Audio route unavailable"
             dispatch(.aecChanged(active))
             if wasActive && !active {
-                ToastManager.shared.info("Talk mode", message: "Echo cancellation is unavailable on the new route; talk mode is still listening.")
+                ToastManager.shared.info("Talk mode", message: aecStatus)
             }
         }
     }
@@ -296,19 +308,31 @@ public final class TalkModeController: ObservableObject {
             publishAvatar(.reaction(.surprised))
         }
         snapshot = next
+        if echoRejectedSegments != next.echoRejectedSegments { echoRejectedSegments = next.echoRejectedSegments }
         captureTiming.retain(next.segments)
         if state != next.state { state = next.state }
         if caption != next.caption { caption = next.caption }
         gate?.update(aec: next.aecActive, playback: next.state == .speaking, ignoreUntil: next.ignoreUntil)
         for effect in effects {
             switch effect {
+            case .pauseReply:
+                tentativeInterruptedRendering = duplex?.isBenchmarkRendering == true
+                if tentativeInterruptedRendering && duplex?.benchmarkHasUserOverlap == false {
+                    benchmarkTentativeSelfPauses += 1
+                }
+                duplex?.pausePlayback()
+            case .resumeReply:
+                tentativeInterruptedRendering = false
+                duplex?.resumePlayback()
             case .cancelReply: cancelReply()
-            case .send(let text, let epoch, let speechEnd): send(text, epoch: epoch, speechEnd: speechEnd)
+            case .send(let text, let epoch, let speechEnd): enqueueSend(text, epoch: epoch, speechEnd: speechEnd)
             }
         }
     }
 
     private func cancelReply() {
+        pendingSend?.cancel()
+        pendingSend = nil
         publishAvatar(.cleared)
         let start = ProcessInfo.processInfo.systemUptime
         let epoch = replyEpoch
@@ -318,15 +342,18 @@ public final class TalkModeController: ObservableObject {
         if let epoch { latency.update(epoch: epoch) { $0.finishReasoning(at: start) } }
         ttsSubscription = nil
         captionSubscription = nil
-        if epoch != nil, snapshot.state == .userSpeaking || snapshot.state == .endOfTurn,
-           duplex?.isBenchmarkRendering == true {
+        if epoch != nil, snapshot.state == .userSpeaking || snapshot.state == .endOfTurn || tentativeInterruptedRendering,
+           duplex?.isBenchmarkRendering == true || tentativeInterruptedRendering {
             benchmarkInterruptedRendering = true
+            if duplex?.benchmarkHasUserOverlap == false { benchmarkSelfBargeIns += 1 }
         }
+        let interrupted = snapshot.state == .userSpeaking || snapshot.state == .endOfTurn || tentativeInterruptedRendering
+        tentativeInterruptedRendering = false
         stream?.cancel()
         stream = nil
         let stopped = ProcessInfo.processInfo.systemUptime
         if let epoch, duplex?.usesFileInput == true,
-           snapshot.state == .userSpeaking || snapshot.state == .endOfTurn {
+           interrupted {
             let ms = (stopped - start) * 1000
             latency.update(epoch: epoch) { $0.bargeInToStopMs = ms }
             logger.info("epoch=\(epoch) barge_in_to_player_stop_ms=\(ms)")
@@ -335,9 +362,29 @@ public final class TalkModeController: ObservableObject {
         replyEpoch = nil
     }
 
+    private func enqueueSend(_ text: String, epoch: UInt64, speechEnd: TimeInterval) {
+        pendingSend?.cancel()
+        pendingSend = Task { [weak self] in
+            guard let self else { return }
+            // Confirmed interruption cancels only after final ASR. Wait for that
+            // actual chat lifecycle to settle before issuing its replacement.
+            while self.session?.isAvailableForDispatchReattachment == false || self.state != .thinking {
+                do { try await Task.sleep(for: .milliseconds(20)) } catch { return }
+                // A tentative candidate may restore thinking. Keep the pending
+                // send alive until then; a confirmed replacement advances epoch.
+                guard self.snapshot.epoch == epoch, self.state != .off else { return }
+            }
+            guard !Task.isCancelled, self.snapshot.epoch == epoch, self.state == .thinking else { return }
+            self.send(text, epoch: epoch, speechEnd: speechEnd)
+        }
+    }
+
     private func send(_ text: String, epoch: UInt64, speechEnd: TimeInterval) {
         guard let session, let duplex else { return }
         guard session.isAvailableForDispatchReattachment else { recoverTurn("The previous chat turn is still settling. Please try again."); return }
+        if duplex.usesFileInput && !duplex.benchmarkHasUserOverlap { benchmarkEchoSegmentsSent += 1 }
+        duplex.resetBenchmarkUserOverlap()
+        gate?.beginReply()
         replyEpoch = epoch
         publishAvatar(.began(epoch))
         latency.begin(epoch: epoch, speechEnd: speechEnd)
@@ -349,8 +396,9 @@ public final class TalkModeController: ObservableObject {
         let handle = TTSService.shared.beginTalkStream(id: "talk-\(epoch)", duplex: duplex,
             voiceOverride: agentID.flatMap { AgentManager.shared.agent(for: $0)?.ttsVoice })
         stream = handle
-        releaseSubscription = handle.releasedChunks.sink { [weak self] _ in
+        releaseSubscription = handle.releasedChunks.sink { [weak self] text in
             guard let self, self.replyEpoch == epoch, self.snapshot.epoch == epoch else { return }
+            self.dispatch(.agentSpoke(text: text, at: ProcessInfo.processInfo.systemUptime))
             self.latency.update(epoch: epoch) {
                 if $0.firstSentenceReleasedMs == nil {
                     $0.firstSentenceReleasedMs = (ProcessInfo.processInfo.systemUptime - speechEnd) * 1000
@@ -359,6 +407,8 @@ public final class TalkModeController: ObservableObject {
         }
         captionSubscription = handle.playedChunks.sink { [weak self] text in
             guard let self, self.replyEpoch == epoch, self.snapshot.epoch == epoch else { return }
+            // Refresh at actual playback too: synthesis/queueing can exceed 10 s.
+            self.dispatch(.agentSpoke(text: text, at: ProcessInfo.processInfo.systemUptime))
             self.publishAvatar(.playback(text, epoch))
         }
         ttsSubscription = handle.events.sink { [weak self] event in
@@ -455,6 +505,13 @@ public final class TalkModeController: ObservableObject {
                     }
                 }
             }
+            if config.echo != nil {
+                // Let delayed echo and final ASR settle before judging the run.
+                try await Task.sleep(for: .seconds(2))
+                try await benchmarkWait(timeoutMs: config.timeoutMs) {
+                    self.state == .listening && self.session?.isAvailableForDispatchReattachment == true
+                }
+            }
             finishBenchmark(error: lastError, bargeInAttempted: bargeInAttempted)
         } catch { finishBenchmark(error: lastError ?? error.localizedDescription, bargeInAttempted: bargeInAttempted) }
     }
@@ -473,8 +530,13 @@ public final class TalkModeController: ObservableObject {
                 let status: [String: Any] = ["error": error as Any? ?? NSNull(),
                     "bargeInAttempted": bargeInAttempted,
                     "bargeInObserved": benchmarkInterruptedRendering && latency.turns.contains { $0.bargeInToStopMs != nil },
+                    "echoRejectedSegments": echoRejectedSegments,
+                    "selfBargeIns": benchmarkSelfBargeIns,
+                    "tentativeSelfPauses": benchmarkTentativeSelfPauses,
+                    "echoSegmentsSent": benchmarkEchoSegmentsSent,
+                    "echoMixedSamples": duplex?.benchmarkEchoMixedSamples ?? 0,
                     "inputCount": env["OSAURUS_TALK_INPUT_WAV"]?.split(separator: ",").count ?? 0,
-                    "evidence": "Real VAD/ASR/chat/TTS; paced null sink. First audio is buffer completion; barge-in is confirmed interruption to sink stop. No acoustic proof."]
+                    "evidence": "Real VAD/ASR/chat/TTS; paced null sink. First audio is buffer completion; barge-in is confirmed interruption to sink stop. Self-barge-ins count confirmed cancellations; tentative self-pauses are reported separately. No acoustic proof."]
                 try JSONSerialization.data(withJSONObject: status, options: [.prettyPrinted, .sortedKeys])
                     .write(to: URL(fileURLWithPath: path + ".status.json"), options: .atomic)
             } catch { NSLog("[TalkBenchmark] Cannot write metrics: %@", error.localizedDescription) }

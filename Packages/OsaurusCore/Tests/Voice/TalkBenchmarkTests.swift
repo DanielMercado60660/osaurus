@@ -87,6 +87,44 @@ struct TalkBenchmarkTests {
         #expect(throws: TalkBenchmarkError.self) { try sink.prepare() }
     }
 
+    @Test func echoMixesActualRenderedPCMWithoutUserInput() async throws {
+        let sink = TalkBenchmarkAudio()
+        let record = BenchmarkRecord()
+        sink.start(echo: .init(decibels: -20, delayMs: 30)) { samples, _ in record.capture(samples) }
+        try sink.prepare()
+        sink.schedule(Array(repeating: 0.5, count: 2400)) { record.add(1, $0) }
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(sink.echoMixedSamples == 1600)
+        #expect(!sink.hasUserOverlap)
+        sink.shutdown()
+        #expect(record.results == [1] && record.successes == [true])
+        #expect(record.captured.filter { abs($0 - 0.05) < 0.00001 }.count == 1600)
+        #expect(record.captured.prefix(480).allSatisfy { $0 == 0 })
+    }
+
+    @Test func tentativePauseKeepsBuffersThenResumeOrCancelSettles() async throws {
+        let sink = TalkBenchmarkAudio()
+        let record = BenchmarkRecord()
+        sink.start(echo: .init(decibels: -20, delayMs: 30)) { samples, _ in record.capture(samples) }
+        try sink.prepare()
+        sink.pause()
+        sink.schedule(Array(repeating: 0.5, count: 2400)) { record.add(1, $0) }
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(record.results.isEmpty && sink.echoMixedSamples == 0 && !sink.isRendering)
+        sink.resume()
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(record.results == [1] && record.successes == [true])
+        #expect(sink.echoMixedSamples == 1600)
+        sink.pause()
+        sink.schedule(Array(repeating: 0.5, count: 2400)) { record.add(2, $0) }
+        sink.cancel()
+        sink.resume()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(record.results == [1, 2] && record.successes == [true, false])
+        #expect(sink.echoMixedSamples == 1600)
+        sink.shutdown()
+    }
+
     @Test func wavInputUsesPacedFramesAndRejectsWrongRate() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("talk-\(UUID()).wav")
         defer { try? FileManager.default.removeItem(at: url) }

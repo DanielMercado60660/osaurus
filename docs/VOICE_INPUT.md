@@ -553,16 +553,30 @@ a clause of at least 40 characters ending in a comma/semicolon may be released.
 Later sentences retain the normal grouping policy. Raw visible content is observed
 before display pacing; reasoning remains on its existing separate channel.
 
-With **Allow Barge-In**, speech sustained for at least 160 ms during thinking or
-playback cancels both generation and queued audio. Capture stays running, preserving
-the onset for the new turn. Reply epochs and capture segment IDs reject stale
+With **Allow Barge-In**, speech must be sustained for at least 250 ms with active
+Apple voice processing, or 300 ms without it (a larger saved minimum still wins).
+Playback pauses tentatively, preserving queued audio and the reply's generation.
+Final ASR confirms a real interruption before cancelling the reply. A rejected
+self-transcript or failed/empty recognition resumes the paused reply. Capture
+stays running, preserving the onset for the new turn. Reply epochs and capture segment IDs reject stale
 callbacks. The indicator shows listening, hearing you, transcribing, thinking, or
 speaking; **Show Captions** controls the partial user transcript.
 
 **Echo Cancellation** requests Apple voice processing in a talk-only duplex
 AVAudioEngine: microphone capture and TTS render through the same graph. If setup
-fails or the option is off, the fallback raises VAD probability from 0.5 to 0.75
-during playback and ignores speech for 300 ms after playback ends. Headphones can
+succeeds, playback still raises VAD probability from 0.5 to 0.65; with AEC off
+or unavailable the threshold is 0.75. Both elevated thresholds remain for 250 ms
+after playback ends; real speech above the threshold is still accepted.
+During playback, low-VAD frames learn a microphone RMS echo floor (EMA). A speech
+frame needs both sufficient VAD probability and at least 2.5 times that floor.
+A low-VAD estimate of speaker-to-microphone coupling also compares the concurrent
+raw output RMS, so louder playback can raise the predicted echo floor. Both
+meters use linear PCM, not the display meter. The floor resets per reply and
+decays after playback. Constants are centralized in `TalkEchoPolicy`.
+Final transcripts are compared with released/played agent sentences from the last
+10 seconds. Normalized token substrings or >=60% overlap of the transcript's
+unique tokens are rejected and counted in `echoRejectedSegments`. This heuristic
+can also reject a user intentionally repeating the agent. Headphones can
 help with difficult acoustic environments. A non-default microphone uses separate
 capture and output engines with AEC disabled, keeping the default speaker; a
 one-line notice explains the fallback. Route notifications coalesce for 300 ms
@@ -619,8 +633,11 @@ and <150 ms interruption targets require live measurement on the selected model,
 provider, and devices. ASR finalization, VAD windowing, model warm-up, and the
 configured silence interval all contribute to latency.
 
-In Debug builds, the gauge button beside the talk indicator opens the latency
-popover. **Copy latency JSON** exports the in-memory samples to the clipboard.
+The gauge button beside the talk indicator opens the latency popover in Debug
+and Release. It shows **Echo cancellation: On (Apple voice processing)** or
+**Echo cancellation: Off — <reason>**, plus the rejected-echo count. VPIO errors
+remain visible in the reason. `ai.osaurus` / `talk.audio` logs record the AEC
+decision, device IDs, input rate/channels and VPIO errors at notice level. **Copy latency JSON** exports the in-memory samples to the clipboard.
 Save them to a file and run `python3 fork/metrics/talk_latency.py turns.json` for
 p50/p90 with measured/missing denominators. This exporter applies the same
 nearest-rank percentile rule as the app and does not grade acoustic targets.
@@ -637,3 +654,34 @@ toast and leave talk mode available for the next turn. External playback cancell
 ends the reply without ending capture. Speaker buttons, tab-switch stops, and the
 `speak` tool do not replace active talk playback. A toggle received during teardown
 queues a restart once teardown finishes.
+
+
+### Residual-echo benchmark (T18)
+
+The T06 launcher now retains baseline, barge-in, echo, and echo-plus-barge-in runs:
+
+```sh
+LABEL=t18 APP_SOURCE_SHA=<built-source-sha> fork/metrics/talk_bench.sh \
+  /absolute/path/osaurus.app owner/model-folder /absolute/path/model-bundle
+```
+
+Direct file-input runs opt in with `OSAURUS_TALK_ECHO_DB=-20` and optional
+`OSAURUS_TALK_ECHO_DELAY_MS=30` (0...1000 ms; requires ECHO_DB). Gain accepts
+finite -60...0 dB. The paced null sink resamples its actual rendered 24 kHz TTS
+PCM to 16 kHz, delays it, and adds it to capture even between user WAVs. Pause
+preserves render buffers; cancellation drops them; already emitted echo drains.
+This simulates residual echo, not Apple's VPIO or a physical room.
+
+The completion sidecar reports `echoMixedSamples`, `echoRejectedSegments`,
+`selfBargeIns` (confirmed cancellation without supplied user audio),
+`tentativeSelfPauses` (temporary playback stops without supplied user audio),
+and `echoSegmentsSent` (sends without supplied user audio). Input provenance is
+tracked from unmixed WAV samples since the preceding send; it cannot distinguish
+an echo transcript mixed with a simultaneous real user's speech. Transcript and
+model output inspection are still required for overlapping speech.
+The echo scenarios require actual mixed samples, zero self-barge-ins, zero
+tentative self-pauses, zero echo sends, complete turn telemetry and exactly the
+expected number of turns. Echo rejection counts may be zero if the acoustic gate
+rejects all residuals. The real-user barge-in scenario must still show an actual
+interruption. A two-second trailing observation period allows residual echo and
+ASR to settle; timeouts and missing artifacts remain PARTIAL.

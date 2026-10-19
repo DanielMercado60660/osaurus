@@ -10,15 +10,23 @@ final class TalkBenchmarkAudio: @unchecked Sendable {
     private var pacer: TalkWAVFramePacer?
     private var frame = 0
     private var inputDone: CheckedContinuation<Void, Error>?
-    private var generation = 0
     private var playing = false
-    private var pending: [UUID: @Sendable (Bool) -> Void] = [:]
-    private var outputEnd = DispatchTime.now()
+    private struct Pending {
+        let samples: [Float]
+        var offset = 0
+        let completion: @Sendable (Bool) -> Void
+    }
+    private var pending: [Pending] = []
+    private var paused = false
+    private var echoMixer: TalkBenchmarkEchoMixer?
+    private var userOverlap = false
+    private var rawLevel: (@Sendable (Float) -> Void)?
     private var meter = TTSOutputMeter()
     private var level: (@Sendable (Float) -> Void)?
 
-    func start(capture: @escaping @Sendable ([Float], Float) -> Void) {
+    func start(echo: TalkBenchmarkEchoConfiguration? = nil, capture: @escaping @Sendable ([Float], Float) -> Void) {
         queue.sync {
+            echoMixer = echo.map(TalkBenchmarkEchoMixer.init)
             let timer = DispatchSource.makeTimerSource(queue: queue)
             let interval = DispatchTimeInterval.milliseconds(TalkWAVFramePacer.frameMilliseconds)
             timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(1))
@@ -34,6 +42,12 @@ final class TalkBenchmarkAudio: @unchecked Sendable {
                         self.inputDone?.resume()
                         self.inputDone = nil
                     }
+                }
+                if chunk.contains(where: { $0 != 0 }) { self.userOverlap = true }
+                let rendered = self.renderFrame()
+                if var mixer = self.echoMixer {
+                    chunk = mixer.mix(input: chunk, output24k: rendered)
+                    self.echoMixer = mixer
                 }
                 capture(chunk, min(1, chunk.withUnsafeBufferPointer { TTSOutputMeter.rms($0) } * 10))
             }
@@ -71,7 +85,13 @@ final class TalkBenchmarkAudio: @unchecked Sendable {
         } onCancel: { self.shutdown() }
     }
 
-    var isRendering: Bool { queue.sync { playing && !pending.isEmpty } }
+    var isRendering: Bool { queue.sync { playing && !paused && !pending.isEmpty } }
+    var hasUserOverlap: Bool { queue.sync { userOverlap } }
+    var echoMixedSamples: Int { queue.sync { echoMixer?.mixedSamples ?? 0 } }
+    func resetUserOverlap() { queue.sync { userOverlap = false } }
+    func setRawLevel(_ handler: @escaping @Sendable (Float) -> Void) { queue.sync { rawLevel = handler } }
+    func pause() { queue.sync { paused = true; rawLevel?(0); level?(0) } }
+    func resume() { queue.sync { paused = false } }
 
     func setLevel(_ handler: @escaping @Sendable (Float) -> Void) { queue.sync { level = handler } }
     func prepare() throws {
@@ -83,30 +103,37 @@ final class TalkBenchmarkAudio: @unchecked Sendable {
     func schedule(_ samples: [Float], completion: @escaping @Sendable (Bool) -> Void) {
         queue.async {
             guard self.playing else { completion(false); return }
-            let epoch = self.generation
-            let id = UUID()
-            self.pending[id] = completion
-            let start = max(self.outputEnd.uptimeNanoseconds, DispatchTime.now().uptimeNanoseconds)
-            self.outputEnd = DispatchTime(uptimeNanoseconds: start + UInt64(Double(samples.count) / 24_000 * 1_000_000_000))
-            let rms = samples.withUnsafeBufferPointer { TTSOutputMeter.rms($0) }
-            self.queue.asyncAfter(deadline: DispatchTime(uptimeNanoseconds: start)) {
-                guard self.generation == epoch else { return }
-                self.level?(self.meter.update(rms: rms))
-            }
-            self.queue.asyncAfter(deadline: self.outputEnd) {
-                guard self.generation == epoch, let callback = self.pending.removeValue(forKey: id) else { return }
-                callback(true)
-                if self.pending.isEmpty { self.level?(0) }
-            }
+            self.pending.append(Pending(samples: samples, completion: completion))
         }
     }
+    private func renderFrame() -> [Float] {
+        var rendered: [Float] = []
+        var completed: [@Sendable (Bool) -> Void] = []
+        if playing && !paused {
+            while rendered.count < 480 && !pending.isEmpty {
+                let count = min(480 - rendered.count, pending[0].samples.count - pending[0].offset)
+                let start = pending[0].offset
+                rendered.append(contentsOf: pending[0].samples[start..<(start + count)])
+                pending[0].offset += count
+                if pending[0].offset == pending[0].samples.count {
+                    completed.append(pending.removeFirst().completion)
+                }
+            }
+        }
+        rendered.append(contentsOf: repeatElement(Float(0), count: 480 - rendered.count))
+        let rms = rendered.withUnsafeBufferPointer { TTSOutputMeter.rms($0) }
+        rawLevel?(rms)
+        level?(rms == 0 ? 0 : meter.update(rms: rms))
+        for callback in completed { callback(true) }
+        return rendered
+    }
     private func cancelLocked() {
-        generation += 1
         playing = false
-        outputEnd = .now()
-        let callbacks = pending.values
+        paused = false
+        let callbacks = pending.map(\.completion)
         pending.removeAll()
         meter = TTSOutputMeter()
+        rawLevel?(0)
         level?(0)
         for callback in callbacks { callback(false) }
     }

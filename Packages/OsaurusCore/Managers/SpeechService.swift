@@ -1146,6 +1146,7 @@ public final class SpeechService: ObservableObject {
         }
         let buffer = audioBuffer
         talkAudio = duplex
+        duplex.setRawOutputHandler { gate.updateOutputRMS($0) }
         let (format, aec) = try await duplex.start(
             voiceProcessing: echoCancellation, deviceID: deviceID,
             capture: { samples, level in
@@ -1791,7 +1792,8 @@ private actor TranscriptionWorker {
                 let result = try await vadManager.processStreamingChunk(recent, state: vadState, config: .default)
                 vadState = result.state
                 let now = ProcessInfo.processInfo.systemUptime
-                let detected = gate.detects(result.probability, at: now)
+                let rms = sqrt(recent.reduce(Float(0)) { $0 + $1 * $1 } / Float(recent.count))
+                let detected = gate.detects(result.probability, micRMS: rms, at: now)
                 if detected {
                     if !inSegment {
                         segment += 1
