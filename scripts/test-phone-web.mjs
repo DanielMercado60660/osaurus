@@ -1,5 +1,5 @@
 // DOM/protocol tests without a browser, network, package install or model.
-import {test} from 'node:test';
+import {test,afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -30,8 +30,11 @@ function mockCanvasContext() {
 const avatarSource=fs.readFileSync(new URL('../Packages/OsaurusCore/Resources/Phone/phone-avatar.js',import.meta.url),'utf8');
 const voiceSource=fs.readFileSync(new URL('../Packages/OsaurusCore/Resources/Phone/phone-voice.js',import.meta.url),'utf8');
 const screenSource=fs.readFileSync(new URL('../Packages/OsaurusCore/Resources/Phone/phone-screen.js',import.meta.url),'utf8');
+const connectionSource=fs.readFileSync(new URL('../Packages/OsaurusCore/Resources/Phone/phone-connection.js',import.meta.url),'utf8');
 const source=fs.readFileSync(new URL('../Packages/OsaurusCore/Resources/Phone/phone-app.js',import.meta.url),'utf8');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const openPages=[];
+afterEach(()=>{for(const page of openPages.splice(0))page.lifecycle('pagehide');});
 async function page(run, voice = false, secure = true, agents = [{id:'agent-1',name:'My agent',avatar:'purple'}]) {
   class Recorder {
     static isTypeSupported(type) { return type === 'audio/mp4'; }
@@ -40,7 +43,7 @@ async function page(run, voice = false, secure = true, agents = [{id:'agent-1',n
     stop(){this.state='inactive';this.ondataavailable({data:new Blob(['audio'])});this.onstop();}
   }
   const tracks=[{stop(){}}];
-  const elements=new Map(['agents','status','chat','composer','prompt','mic','stop','send','new','speaker','talk','voice-hint','avatar-toggle','avatar-small','companion-toggle','avatar-large','companion-stage','companion-caption','screen-tab','chat-tab','screen-panel','screen-status','screen-enlarge','screen-image','screen-agent-hint','prompt-label','agent-model','model-picker','model-list','model-status','model-close','model-reload'].map(id=>[id,new Element(id==='agents'?'select':'div')]));
+  const elements=new Map(['connection-status','agents','status','chat','composer','prompt','mic','stop','send','new','speaker','talk','voice-hint','avatar-toggle','avatar-small','companion-toggle','avatar-large','companion-stage','companion-caption','screen-tab','chat-tab','screen-panel','screen-status','screen-enlarge','screen-image','screen-agent-hint','prompt-label','agent-model','model-picker','model-list','model-status','model-close','model-reload'].map(id=>[id,new Element(id==='agents'?'select':'div')]));
   const requests=[], documentEvents={}, windowEvents={};
   const listen=(events,type,fn)=>(events[type]??=[]).push(fn);
   const context=vm.createContext({
@@ -54,11 +57,12 @@ async function page(run, voice = false, secure = true, agents = [{id:'agent-1',n
       requests.push({url,options});return run(url,options);
     },
   });
-  vm.runInContext(voiceSource,context);vm.runInContext(avatarSource,context);vm.runInContext(screenSource,context);vm.runInContext(source,context);await tick();
-  return {context,requests,$:id=>elements.get(id),
+  vm.runInContext(connectionSource,context);vm.runInContext(voiceSource,context);vm.runInContext(avatarSource,context);vm.runInContext(screenSource,context);vm.runInContext(source,context);await tick();
+  const result={context,requests,$:id=>elements.get(id),
     visibility(hidden){context.document.hidden=hidden;for(const fn of documentEvents.visibilitychange||[])fn();},
     lifecycle(type){for(const fn of windowEvents[type]||[])fn();},
     async send(text){elements.get('prompt').value=text;await elements.get('composer').handlers.submit({preventDefault(){}});}};
+  openPages.push(result);return result;
 }
 function sse(text,done=true){
   const bytes=new TextEncoder().encode(`data: ${JSON.stringify({choices:[{delta:{content:text}}]})}\r\n\r\n${done?'data: [DONE]\r\n\r\n':''}`);
@@ -735,4 +739,125 @@ test('model control follows Chat/Screen selection and hides when no agent is ava
   p.$('screen-tab').onclick();assert.equal(p.$('agent-model').textContent,'Model: computer-model');
   p.$('chat-tab').onclick();assert.equal(p.$('agent-model').textContent,'Model: computer-model');
   const empty=await page(()=>sse('ok'));empty.$('screen-tab').onclick();assert.equal(empty.$('agent-model').hidden,true);empty.$('chat-tab').onclick();
+});
+
+function connectionHarness(fetcher=async()=>new Response('{}')) {
+  let time=10000, next=0, recovered=0;
+  const timers=new Map(), messages=[], saved=new Map();
+  const context=vm.createContext({AbortController,Date});
+  vm.runInContext(connectionSource,context);
+  const Connection=vm.runInContext('PhoneConnection',context);
+  const connection=new Connection({fetcher,changed:message=>messages.push(message),recovered:()=>recovered++,
+    storage:{getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)},now:()=>time,
+    schedule:(fn,delay)=>{timers.set(++next,{fn,delay});return next;},cancel:id=>timers.delete(id)});
+  return {connection,timers,messages,saved,get recovered(){return recovered;},setTime(value){time=value;},
+    async fire(){const [id,timer]=timers.entries().next().value;timers.delete(id);timer.fn();await tick();return timer.delay;}};
+}
+
+test('offline retries back off to 30 seconds and persist only last seen',async()=>{
+  let online=false;
+  const h=connectionHarness(async()=>{if(!online)throw new TypeError('Failed to fetch');return new Response('{}');});
+  h.connection.seen();h.setTime(20000);h.connection.failed();
+  assert.match(h.messages.at(-1),/Your Mac is asleep or offline · Last seen:/);
+  assert.equal(h.connection.lastSeen,10000);
+  const delays=[];for(let i=0;i<7;i++)delays.push(await h.fire());
+  assert.deepEqual(delays,[1000,2000,4000,8000,16000,30000,30000]);
+  online=true;await h.fire();
+  assert.equal(h.connection.offline,false);assert.equal(h.connection.lastSeen,20000);
+  assert.equal(h.recovered,1);assert.equal(h.connection.attempt,0);assert.equal(h.timers.size,0);
+  assert.deepEqual([...h.saved.keys()],['osaurus.phone.lastSeen']);
+});
+
+test('offline never replays a failed mutation; reconnect probes only capabilities',async()=>{
+  const urls=[];
+  const h=connectionHarness(async(url)=>{urls.push(url);throw new TypeError('network');});
+  await assert.rejects(()=>h.connection.fetch('/agents/a/run',{method:'POST'}));
+  await h.fire();await h.fire();
+  assert.deepEqual(urls,['/agents/a/run','/phone/capabilities','/phone/capabilities']);
+  h.connection.stop();assert.equal(h.timers.size,0);
+});
+
+test('aborts and HTTP errors are not reported as an offline Mac',async()=>{
+  const aborted=connectionHarness(async()=>{throw new DOMException('Stopped','AbortError');});
+  await assert.rejects(()=>aborted.connection.fetch('/agents/a/run'));
+  assert.equal(aborted.connection.offline,false);assert.equal(aborted.timers.size,0);
+  for(const code of [401,403,500,503]) {
+    const h=connectionHarness(async()=>new Response('denied',{status:code}));
+    assert.equal((await h.connection.fetch('/agents')).status,code);
+    assert.equal(h.connection.offline,false);assert.equal(h.timers.size,0);
+    await h.connection.probe();assert.match(h.messages.at(-1),new RegExp(`access failed \\(${code}\\)`));
+  }
+});
+
+test('probe timeout retries, repeated failure coalesces, and resume resets pending timer',async()=>{
+  const h=connectionHarness((url,{signal})=>new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('timeout','AbortError')))));
+  h.connection.failed();h.connection.failed();assert.equal(h.timers.size,1);
+  await h.fire(); // Starts a hanging probe and its 5-second timeout.
+  assert.equal([...h.timers.values()][0].delay,5000);
+  await h.fire();assert.equal(h.connection.offline,true);
+  assert.equal([...h.timers.values()][0].delay,2000);
+  h.connection.stop();assert.equal(h.timers.size,0);
+});
+
+test('phone UI displays offline text for failed chat and does not retry the turn',async()=>{
+  const p=await page(()=>{throw new TypeError('Failed to fetch');});
+  await p.send('hello');
+  assert.match(p.$('connection-status').textContent,/Your Mac is asleep or offline/);
+  assert.match(p.$('status').textContent,/Last seen:/);
+  assert.equal(p.$('send').disabled,false);assert.equal(p.$('stop').hidden,true);
+  assert.equal(p.requests.length,1);p.lifecycle('pagehide');
+});
+
+test('offline shell allowlist excludes private/API responses and HTTP denials never fall back',async()=>{
+  const handlers={}, cached=[], served=[], cache={addAll:async paths=>cached.push(...paths),match:async path=>{served.push(path);return 'static shell';}};
+  let response=new Response('Forbidden',{status:403});
+  const context=vm.createContext({URL,AbortController,setTimeout,clearTimeout,
+    self:{location:{origin:'https://mac.test'},addEventListener:(type,fn)=>handlers[type]=fn,skipWaiting:async()=>{},clients:{claim:async()=>{}}},
+    caches:{open:async()=>cache,keys:async()=>[],delete:async()=>{}},fetch:async()=>{if(response instanceof Error)throw response;return response;}});
+  vm.runInContext(fs.readFileSync(new URL('../Packages/OsaurusCore/Resources/Phone/phone-sw.js',import.meta.url),'utf8'),context);
+  let installed;handlers.install({waitUntil:promise=>installed=promise});await installed;
+  assert.ok(cached.includes('/phone/connection.js'));assert.ok(cached.includes('/phone'));
+  assert.ok(!cached.includes('/phone/capabilities'));
+  for(const path of ['/agents','/phone/api/screen','/audio/transcriptions','/models/picker','/phone/capabilities','/phone?secret=x']) {
+    let intercepted=false;handlers.fetch({request:{url:'https://mac.test'+path,method:'GET'},respondWith:()=>intercepted=true});
+    assert.equal(intercepted,false,path);
+  }
+  let result;const event={request:{url:'https://mac.test/phone',method:'GET'},respondWith:promise=>result=promise};
+  handlers.fetch(event);assert.equal((await result).status,403);assert.equal(served.length,0);
+  response=new TypeError('offline');handlers.fetch(event);assert.equal(await result,'static shell');assert.deepEqual(served,['/phone']);
+});
+
+test('bootstrap read timeout enters offline backoff; explicit cancellation does not',async()=>{
+  const hanging=(url,{signal})=>new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('aborted','AbortError'))));
+  const h=connectionHarness(hanging);
+  const pending=assert.rejects(()=>h.connection.fetch('/agents'));
+  assert.equal(await h.fire(),5000);await pending;
+  assert.equal(h.connection.offline,true);assert.equal([...h.timers.values()][0].delay,1000);
+  const h2=connectionHarness(hanging),controller=new AbortController();
+  const cancelled=assert.rejects(()=>h2.connection.fetch('/agents',{signal:controller.signal}));
+  controller.abort();await cancelled;
+  assert.equal(h2.connection.offline,false);assert.equal(h2.timers.size,0);
+});
+
+test('stopped and superseded probes cannot update last seen or recover the UI',async()=>{
+  const pending=[];
+  const h=connectionHarness(()=>new Promise(resolve=>pending.push(resolve)));
+  h.connection.failed();h.connection.resume();h.connection.resume();
+  pending[0](new Response('{}'));await tick();assert.equal(h.connection.lastSeen,null);
+  pending[1](new Response('{}'));await tick();assert.equal(h.connection.lastSeen,10000);
+  assert.equal(h.recovered,1);
+  h.connection.resume();h.connection.stop();h.setTime(20000);
+  pending[2](new Response('{}'));await tick();assert.equal(h.connection.lastSeen,10000);assert.equal(h.timers.size,0);
+});
+
+test('an open idle phone detects Mac loss, backs off and resumes monitoring after recovery',async()=>{
+  let online=true;
+  const h=connectionHarness(async()=>{if(!online)throw new TypeError('offline');return new Response('{}');});
+  h.connection.watch();await tick();
+  assert.equal([...h.timers.values()][0].delay,30000);
+  online=false;await h.fire();
+  assert.equal(h.connection.offline,true);assert.equal([...h.timers.values()][0].delay,1000);
+  online=true;await h.fire();
+  assert.equal(h.connection.offline,false);assert.equal([...h.timers.values()][0].delay,30000);
+  h.connection.stop();assert.equal(h.timers.size,0);
 });

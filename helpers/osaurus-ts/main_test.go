@@ -275,3 +275,25 @@ func TestScreenRequiresActualNodeOwner(t *testing.T) {
 		})
 	}
 }
+
+func TestParentHealthCommands(t *testing.T) {
+	for _, tc := range []struct {
+		name, input string
+		checks      int
+	}{
+		{"health", "health\n", 1},
+		{"coalesced", "health\nhealth\nhealth\n", 1},
+		{"unknown", "restart\n", 0},
+		{"oversized", strings.Repeat("x", 2048) + "\nhealth\n", 0},
+		{"EOF", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := make(chan struct{}, 1)
+			cancelled := false
+			readParentCommands(strings.NewReader(tc.input), checks, func() { cancelled = true })
+			if !cancelled || len(checks) != tc.checks {
+				t.Fatalf("cancelled=%v checks=%d", cancelled, len(checks))
+			}
+		})
+	}
+}

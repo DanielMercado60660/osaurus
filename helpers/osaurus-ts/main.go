@@ -276,7 +276,8 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	// Parent owns stdin. EOF ensures an app crash cannot leave a proxy behind.
-	go func() { _, _ = io.Copy(io.Discard, input); cancel() }()
+	healthChecks := make(chan struct{}, 1)
+	go readParentCommands(input, healthChecks, cancel)
 	lc, err := s.LocalClient()
 	if err != nil {
 		return err
@@ -385,13 +386,46 @@ func run() error {
 	server := &http.Server{Handler: authorize(proxy, lookup, logins, secret, policy), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 * 1024}
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	emit("dns_name", host)
-	emit("running", scheme+"://"+host+"/phone")
+	phoneURL := scheme + "://" + host + "/phone"
+	emit("running", phoneURL)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-healthChecks:
+				probe, done := context.WithTimeout(ctx, 5*time.Second)
+				status, err := lc.Status(probe)
+				done()
+				if err == nil && status != nil && status.BackendState == "Running" {
+					emit("running", phoneURL)
+				}
+			}
+		}
+	}()
 	err = server.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 	return err
 }
+
+// Keep EOF ownership while allowing bounded, coalesced health probes. Unknown
+// commands have no effect; malformed/oversized input ends the parent lifetime.
+func readParentCommands(input io.Reader, checks chan<- struct{}, cancel context.CancelFunc) {
+	defer cancel()
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 128), 1024)
+	for scanner.Scan() {
+		if scanner.Text() == "health" {
+			select {
+			case checks <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
 func main() {
 	if err := run(); err != nil {
 		emit("error", fmt.Sprint(err))

@@ -16,7 +16,7 @@ After onboarding, an empty local chat shows **Make it yours**. Each row takes on
 
 - **Talk to it** requests microphone access, enables the current agent in **Voice → Talk Mode → Enabled for Agent**, and prepares Parakeet (~600 MB) and PocketTTS through the existing download managers. Complete PocketTTS v2.1 English caches are reused from `~/.cache/fluidaudio/Models/pocket-tts/v2.1/english/` or the Osaurus-owned `~/.cache/osaurus/fluidaudio/Models/pocket-tts/v2.1/english/`. Older or incomplete voice packs need a one-time download to the Osaurus-owned cache, with progress; existing shared model folders are preserved. Your selected Parakeet version and any existing TTS provider/voice choices are preserved. New installs use on-device PocketTTS. Start talking with **⌃⌥⌘T** or the chat talk button once preparation finishes. Setup does not start recording. Downloads continue if you leave the chat. The card shows combined model preparation and each model's status; Parakeet and compilation may have indeterminate progress. A failure shows the manager's error; click the same button to retry. If microphone access is denied, allow Osaurus in macOS **System Settings → Privacy & Security → Microphone**, then retry.
 - **Show your companion** enables **Conversation → Appearance → Show animated avatar**, including the floating desktop companion.
-- **Reach it from your phone** opens **Server → Overview → Phone access**, scrolling to that control. Enable Phone access and finish the Tailscale login there. This shortcut never enables access silently; the row is done only when the phone service is running.
+- **Reach it from your phone** opens **Server → Overview → Keep my AI reachable**, scrolling to that control. Enable Keep my AI reachable and finish the Tailscale login there. This shortcut never enables access silently; the row is done only when the phone service is running.
 
 The card disappears when all three rows are ready. **Not now** hides it persistently across chats and launches; background downloads continue. Restore it with **Conversation → Appearance → Show Make it yours**. The three action labels are searchable aliases for their existing destination settings. Notification permission is requested after the onboarding window closes; users who have already completed onboarding retain the launch-time request.
 
@@ -235,7 +235,7 @@ The companion grows while talk mode is active, perks up while listening, and loo
 
 ### Server → Overview → Phone access over Tailscale
 
-**Phone access** is off by default. Enable it to start the local HTTP server and
+**Keep my AI reachable** (Phone access) is off by default. Enable it to start the local HTTP server and
 its bundled `osaurus-ts` helper. **Sign in to Tailscale** opens the helper's
 interactive login URL; authenticate once, then scan the phone URL QR code with a
 phone on your tailnet. The node (`osaurus-<random 6 hex>`) persists across restarts.
@@ -244,12 +244,40 @@ your Mac hostname in certificate transparency logs. This path does not use
 `agent.osaurus.ai` or automatic port mapping. HTTP listens only inside the tailnet;
 while enabled, tsnet also opens a host UDP WireGuard socket.
 
+The same toggle registers **Start at Login** and launches Osaurus silently in
+the menu bar, with the server and phone helper starting automatically. General
+**Start at Login** is an independent preference: phone access requires login
+registration even when that preference is off; disabling phone access restores
+that preference. Registration failures (including unsigned/development builds)
+and required macOS Login Items approval appear in the card. A failed registration
+means reboot/login reachability is not established.
+
+While enabled and on **AC power**, Osaurus prevents **idle system sleep**; the
+display may sleep. On battery or an unknown power source it releases that
+assertion and shows why continuous reachability is unavailable. Turning the
+toggle off or quitting also releases it. This does not override manual sleep,
+lid closure, shutdown, FileVault's pre-login screen, or macOS power policy.
+The card's URL describes the helper's current status, not a guarantee that a
+remote device has network access. Wake and network changes trigger a fresh
+helper status probe; no running response within 10 seconds restarts the helper.
+Checks also run every 30 seconds while the app is running. Login-in-progress is
+left alone so authentication is not repeatedly interrupted.
+
+The phone shows **Your Mac is asleep or offline**, its last-seen time, and
+checks connectivity every 30 seconds while open, and retries failed reads after
+1, 2, 4, 8, 16, then at most 30 seconds. It
+never automatically resends a chat, model edit, or other mutation. Opening an
+installed HTTPS phone page offline requires one successful online visit to
+install its static shell. Only static UI assets and a last-seen timestamp are
+stored locally; agent data, conversations, screen images, audio and API responses
+are not cached. HTTP fallback cannot install the offline service worker.
+
 **Allowed Tailscale logins** is a comma-separated list of tailnet login names.
 Empty means the login that authenticated the node. **Every device signed in to
 an allowed login receives owner access**, including the built-in agent, unless
 you restrict devices. We recommend a tailnet ACL to limit devices that can reach
 this node. **Save allowed logins** applies immediately
-by restarting the helper and rotating its launch secret. Disable **Phone access**
+by restarting the helper and rotating its launch secret. Disable **Keep my AI reachable**
 to stop the helper; the tailnet node state is retained for next time.
 
 **Connected devices** lists the name, StableID, login and last allowed/denied
