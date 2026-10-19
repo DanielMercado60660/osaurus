@@ -10,7 +10,7 @@ WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
 
-.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean wa-helper wa-helper-release bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat evals-pr-report evals-pr-report-baseline evals-watcher-report evals-scoreboard
+.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean ts-helper wa-helper wa-helper-release bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat evals-pr-report evals-pr-report-baseline evals-watcher-report evals-scoreboard
 
 help:
 	@echo "Targets:"
@@ -45,6 +45,7 @@ help:
 	@echo "  evals-test     Run the OsaurusEvals harness unit tests (deterministic, token-free)"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  computer-use-evidence Run local Computer Use proof lane into build/computer-use-evidence/"
+	@echo "  ts-helper      Build the Tailscale phone helper and its SHA-256 pin (needs Go)"
 	@echo "  wa-helper      Build the WhatsApp bridge helper (osaurus-wa) into build/ (needs Go)"
 	@echo "  wa-helper-release  Package build/osaurus-wa-macos.zip and print pin digests"
 	@echo "  clean          Remove DerivedData build output"
@@ -67,6 +68,12 @@ app: cli
 	# Killable out-of-process native plugin host (see PluginProcessHost.swift).
 	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-plugin-host" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
+	@$(MAKE) ts-helper
+	@if command -v go >/dev/null 2>&1; then \
+		cp build/osaurus-ts build/osaurus-ts.sha256 "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/"; \
+	else \
+		rm -f "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-ts" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-ts.sha256"; \
+	fi
 	@echo "Bundling sandbox kernel (Resources/SandboxRuntime)…"
 	./scripts/build/fetch_sandbox_kernel.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Resources/SandboxRuntime"
 
@@ -86,6 +93,17 @@ serve: install-cli
 
 status:
 	osaurus status
+
+# Local source build only: no runtime helper downloads. The binary and digest
+# are embedded together and covered by the final app bundle signature.
+ts-helper:
+	@if command -v go >/dev/null 2>&1; then \
+		mkdir -p build; \
+		(cd helpers/osaurus-ts && go build -trimpath -o ../../build/osaurus-ts .) && \
+		shasum -a 256 build/osaurus-ts | awk '{print $$1}' > build/osaurus-ts.sha256; \
+	else \
+		echo "Go not found; skipping osaurus-ts. Phone access will be unavailable."; \
+	fi
 
 # WhatsApp Web bridge helper (whatsmeow). Dev lane: build locally and point
 # the app at it with OSAURUS_WA_PATH (DEBUG builds only), mirroring the imsg

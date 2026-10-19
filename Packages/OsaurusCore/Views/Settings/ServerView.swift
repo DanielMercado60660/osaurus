@@ -57,7 +57,10 @@ struct ServerView: View {
     /// A settings-search result targeting a Server section opens the Settings
     /// tab (the inner section scroll + glow is handled by the content view).
     private func focusSettingsTabIfRequested() {
-        if managementState.serverSectionRequest != nil {
+        if managementState.serverSectionRequest == "Overview" {
+            selectedTab = .overview
+            managementState.serverSectionRequest = nil
+        } else if managementState.serverSectionRequest != nil {
             selectedTab = .settings
         }
     }
@@ -115,19 +118,34 @@ struct ServerView: View {
 // MARK: - Overview Tab Content
 
 private struct OverviewTabContent: View {
+    @Environment(\.settingsLandingPending) private var pendingLanding
+
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                ServerStatusCard()
-                AccessKeysSection()
-                CommandLineToolSection()
-                CodexCLISetupSection()
-                PeerInferenceSharingSection()
-                RelaysSectionView()
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 24) {
+                    ServerStatusCard()
+                    PhoneAccessSettingsCard().id("phoneAccessCard")
+                    AccessKeysSection()
+                    CommandLineToolSection()
+                    CodexCLISetupSection()
+                    PeerInferenceSharingSection()
+                    RelaysSectionView()
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity)
+            .onAppear {
+                if pendingLanding?.hasPrefix("server.phoneAccess") == true {
+                    proxy.scrollTo("phoneAccessCard", anchor: .top)
+                }
+            }
+            .onChange(of: pendingLanding) { _, target in
+                if target?.hasPrefix("server.phoneAccess") == true {
+                    proxy.scrollTo("phoneAccessCard", anchor: .top)
+                }
+            }
         }
     }
 }

@@ -805,6 +805,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }
 
+            // Phone assets use the same auth gate as the APIs. Do not cache chats,
+            // credentials, or agent data in the browser/service worker.
+            if (head.method == .GET || head.method == .HEAD), let asset = PhoneWebAssets.asset(for: path) {
+                var headers = HTTPHeaders([
+                    ("Content-Type", asset.contentType), ("Cache-Control", "no-store"),
+                    ("X-Content-Type-Options", "nosniff"), ("Connection", "close"),
+                    ("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),
+                ])
+                headers.add(name: "Content-Length", value: String(asset.body.count))
+                context.write(NIOAny(HTTPServerResponsePart.head(
+                    HTTPResponseHead(version: head.version, status: .ok, headers: headers))), promise: nil)
+                if head.method != .HEAD {
+                    var bytes = context.channel.allocator.buffer(capacity: asset.body.count)
+                    bytes.writeBytes(asset.body)
+                    context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(bytes))), promise: nil)
+                }
+                let channel = context.channel
+                context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil))).whenComplete { _ in
+                    channel.close(promise: nil)
+                }
+                return
+            }
+
             // Handle simple HEAD for non-plugin paths only. Plugin routes
             // need the same matching/auth pipeline as GET so they can return
             // accurate Content-Type/Content-Length headers; falling through
@@ -3829,7 +3852,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Whether the inbound connection is a "trusted local caller" — i.e., a
-    /// process on the user's own machine reaching us via 127.0.0.1 / ::1.
+    /// process on the user's own machine reaching us via 127.0.0.1 / ::1,
+    /// or an owner request independently verified by the Phone access helper.
     /// Both the auth gate and CORS auto-trust use this predicate so the two
     /// stay in lockstep; flipping `trustLoopback` off (e.g. behind a reverse
     /// proxy) disables both.
@@ -3838,6 +3862,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // (see `relayOriginHeaderName`). Such requests never count as a trusted
         // local caller, so they remain subject to the auth gate, CORS origin
         // rules, and the built-in-agent remote block.
+        // A marked helper request needs both a physical loopback socket and
+        // the current launch secret, even when ordinary loopback trust is off.
+        let headers = stateRef.value.requestHead?.headers
+        if headers?.first(name: PhoneAccessTrust.originHeader) != nil
+            || headers?.first(name: PhoneAccessTrust.secretHeader) != nil {
+            return !stateRef.value.isRelayOrigin && PhoneAccessTrust.shared.accepts(
+                headers?.first(name: PhoneAccessTrust.secretHeader),
+                physicalLoopback: context.channel.remoteAddress?.isLoopback ?? false
+            )
+        }
         guard !stateRef.value.isRelayOrigin else { return false }
         return trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
     }
@@ -3850,6 +3884,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// control, which never admits remote callers regardless of any key.
     /// Relay-tunnel traffic is still excluded (loopback socket, remote origin).
     private func isPhysicalLoopbackConnection(_ context: ChannelHandlerContext) -> Bool {
+        guard stateRef.value.requestHead?.headers.first(name: PhoneAccessTrust.originHeader) == nil,
+            stateRef.value.requestHead?.headers.first(name: PhoneAccessTrust.secretHeader) == nil else { return false }
         guard !stateRef.value.isRelayOrigin else { return false }
         return context.channel.remoteAddress?.isLoopback ?? false
     }

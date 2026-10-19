@@ -59,6 +59,10 @@ struct SettingsSearchSelfFindProbe {
     @Test("controls are findable by the label they display")
     func controlsFindableByOnScreenLabel() {
         let labels: [(query: String, entryID: String)] = [
+            ("Phone access", "server.phoneAccess"),
+            ("Sign in to Tailscale", "server.phoneAccess.login"),
+            ("Allowed Tailscale logins", "server.phoneAccess.logins"),
+            ("Save allowed logins", "server.phoneAccess.saveLogins"),
             ("Border Color", "themes.borders.color"),
             ("Border Width", "themes.borders.width"),
             ("Border Opacity", "themes.borders.opacity"),
