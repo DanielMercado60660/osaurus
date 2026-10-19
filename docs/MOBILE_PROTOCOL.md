@@ -15,8 +15,10 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 
 The fork also provides a browser client at `/phone` through the opt-in embedded
 Tailscale helper (Server → Overview → Phone access). That transport authenticates
-each tailnet peer with WhoIs and the owner's login allowlist, then forwards over
-loopback with a per-launch capability. It uses the existing agent streaming and
+each tailnet peer with WhoIs, the owner's login allowlist and optional StableID
+device restrictions, then forwards over loopback with a per-launch capability
+delivered to the helper over stdin. The helper validates the node's Host names
+and browser origin/fetch metadata; the phone path grants no CORS access. It uses the existing agent streaming and
 audio transcription APIs; it does not use the public relay or the mobile pairing
 flow below. See [Phone access settings](../Packages/OsaurusCore/Resources/Guide/guide-settings.md).
 
