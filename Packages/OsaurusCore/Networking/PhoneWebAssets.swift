@@ -9,6 +9,7 @@ enum PhoneWebAssets {
         case "/phone", "/phone/": name = "phone-index"; type = "text/html; charset=utf-8"
         case "/phone/voice.js": name = "phone-voice"; type = "text/javascript; charset=utf-8"
         case "/phone/avatar.js": name = "phone-avatar"; type = "text/javascript; charset=utf-8"
+        case "/phone/screen.js": name = "phone-screen"; type = "text/javascript; charset=utf-8"
         case "/phone/app.js": name = "phone-app"; type = "text/javascript; charset=utf-8"
         case "/phone/style.css": name = "phone-style"; type = "text/css; charset=utf-8"
         case "/phone/manifest.webmanifest": name = "phone-manifest"; type = "application/manifest+json"
@@ -20,7 +21,7 @@ enum PhoneWebAssets {
         default: return nil
         }
         let ext = [
-            "phone-avatar": "js", "phone-voice": "js", "phone-index": "html", "phone-app": "js", "phone-style": "css",
+            "phone-screen": "js", "phone-avatar": "js", "phone-voice": "js", "phone-index": "html", "phone-app": "js", "phone-style": "css",
             "phone-icon-192": "png", "phone-icon-512": "png",
             "phone-manifest": "webmanifest", "phone-icon": "svg", "phone-sw": "js",
         ][name]!

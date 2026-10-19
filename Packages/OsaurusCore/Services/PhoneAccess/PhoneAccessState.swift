@@ -70,6 +70,7 @@ struct PhoneAccessState: Equatable, Sendable {
 final class PhoneAccessTrust: @unchecked Sendable {
     static let shared = PhoneAccessTrust()
     static let secretHeader = "X-Osaurus-Phone-Secret"
+    static let deviceHeader = "X-Osaurus-Phone-Device"
     static let originHeader = "X-Osaurus-Phone-Origin"
     private let lock = NSLock()
     private var secret: String?

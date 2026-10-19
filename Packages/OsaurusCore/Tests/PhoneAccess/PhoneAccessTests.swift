@@ -147,7 +147,7 @@ struct PhoneAccessTests {
     @Test func bundledWebRoutes() throws {
         for route in [
             "/phone", "/phone/", "/phone/app.js", "/phone/style.css", "/phone/manifest.webmanifest", "/phone/icon.svg",
-            "/phone/icon-192.png", "/phone/icon-512.png", "/phone/sw.js", "/phone/voice.js", "/phone/avatar.js", "/phone/capabilities",
+            "/phone/icon-192.png", "/phone/icon-512.png", "/phone/sw.js", "/phone/voice.js", "/phone/avatar.js", "/phone/screen.js", "/phone/capabilities",
         ] {
             #expect(PhoneWebAssets.asset(for: route) != nil, "Missing \(route)")
         }

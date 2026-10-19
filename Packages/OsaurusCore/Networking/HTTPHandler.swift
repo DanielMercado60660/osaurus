@@ -590,7 +590,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let userAgent = head.headers.first(name: "User-Agent")
 
             // Handle CORS preflight (OPTIONS)
-            if head.method == .OPTIONS {
+            if head.method == .OPTIONS, path != "/phone/api/screen" {
                 let cors = computeCORSHeaders(
                     for: head,
                     isPreflight: true,
@@ -627,6 +627,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 stateRef.value.normalizedPath = path
                 stateRef.value.isSecureChannel = true
                 _isSecureChannel.value = true
+            }
+
+            // This route has a narrower trust boundary than owner APIs. Route it
+            // before general auth so neither ordinary loopback nor any API key
+            // (including a decrypted Secure Channel call) can grant access.
+            if path == "/phone/api/screen" {
+                handlePhoneScreen(head: head, context: context)
+                return
             }
 
             // Access key authentication gate (all data snapshotted at server start, zero locks)
@@ -811,7 +819,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 var headers = HTTPHeaders([
                     ("Content-Type", asset.contentType), ("Cache-Control", "no-store"),
                     ("X-Content-Type-Options", "nosniff"), ("Connection", "close"),
-                    ("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),
+                    ("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),
                 ])
                 headers.add(name: "Content-Length", value: String(asset.body.count))
                 context.write(NIOAny(HTTPServerResponsePart.head(
@@ -4719,6 +4727,43 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    private func handlePhoneScreen(head: HTTPRequestHead, context: ChannelHandlerContext) {
+        let caller = PhoneScreenCaller(
+            marker: head.headers.first(name: PhoneAccessTrust.originHeader),
+            secret: head.headers.first(name: PhoneAccessTrust.secretHeader),
+            deviceID: head.headers.first(name: PhoneAccessTrust.deviceHeader),
+            physicalLoopback: context.channel.remoteAddress?.isLoopback ?? false,
+            relay: stateRef.value.isRelayOrigin,
+            hasAuthorization: head.headers.contains(name: "Authorization"),
+            secureChannel: stateRef.value.isSecureChannel
+        )
+        let query = head.uri.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).dropFirst().first.map(String.init)
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let result = await PhoneScreenService.shared.response(caller: caller, query: query, method: head.method.rawValue)
+            hop {
+                var headers = HTTPHeaders([
+                    ("Content-Type", result.contentType), ("Cache-Control", "no-store"),
+                    ("X-Content-Type-Options", "nosniff"), ("Connection", "close"),
+                    ("Content-Length", String(result.body.count)),
+                ])
+                if result.status == 429 { headers.add(name: "Retry-After", value: "1") }
+                if result.status == 405 { headers.add(name: "Allow", value: "GET") }
+                ctx.value.write(NIOAny(HTTPServerResponsePart.head(HTTPResponseHead(
+                    version: head.version, status: HTTPResponseStatus(statusCode: result.status), headers: headers))), promise: nil)
+                if head.method != .HEAD {
+                    var buffer = ctx.value.channel.allocator.buffer(capacity: result.body.count)
+                    buffer.writeBytes(result.body)
+                    ctx.value.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                }
+                let channel = ctx.value.channel
+                ctx.value.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil))).whenComplete { _ in channel.close(promise: nil) }
+            }
+        }
+    }
+
     // MARK: - Agents
 
     private struct AgentListItem: Codable {
@@ -4766,6 +4811,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// What the phone can change (§13.2): `GET /agents/{id}` for owner
         /// callers and custom agents only.
         var settings: PhoneAgentEditing.Settings? = nil
+        /// Effective Tools + Computer Use capability; excludes built-in agents.
+        var computer_use_enabled: Bool = false
     }
 
     private struct AgentListResponse: Codable {
@@ -9448,6 +9495,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // the relay can carry too (`MobilePairingService.connectEntry`).
             let needsConnectIdentity = ownerCaller && !agents.contains { !$0.isBuiltIn && $0.agentAddress != nil }
             let connectAddress = needsConnectIdentity ? MobileConnectIdentity.address() : nil
+            let computerUseAgents = await MainActor.run {
+                Set(agents.filter {
+                    let capabilities = AgentManager.shared.effectiveCapabilities(for: $0.id)
+                    return !$0.isBuiltIn && capabilities.toolsEnabled && capabilities.computerUseEnabled
+                }.map(\.id))
+            }
             let items = agents.map { agent in
                 let modelId = effectiveModels[agent.id] ?? agent.defaultModel
                 let supportsVision = modelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
@@ -9473,7 +9526,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
                     ,
                     custom_avatar: agent.customAvatarURL != nil ? true : nil,
-                    system_prompt: nil
+                    system_prompt: nil,
+                    computer_use_enabled: computerUseAgents.contains(agent.id)
                 )
             }
 
@@ -9634,6 +9688,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 custom_avatar: agent.customAvatarURL != nil ? true : nil,
                 system_prompt: nil
             )
+            item.computer_use_enabled = await MainActor.run {
+                let capabilities = AgentManager.shared.effectiveCapabilities(for: agent.id)
+                return !agent.isBuiltIn && capabilities.toolsEnabled && capabilities.computerUseEnabled
+            }
             if ownerCaller {
                 // As the Mac resolves it: the built-in Orchestrator keeps its
                 // prompt in its own store (`default-agent.json`), not on the

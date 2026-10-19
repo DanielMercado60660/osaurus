@@ -4,6 +4,8 @@ import SwiftUI
 
 struct PhoneAccessSettingsCard: View {
     @ObservedObject private var service = TailscalePhoneAccessService.shared
+    @ObservedObject private var screen = PhoneScreenService.shared
+    @State private var screenPermission = false
     @EnvironmentObject var server: ServerController
     @State private var logins = ""
     @State private var restrictDevices = false
@@ -23,6 +25,20 @@ struct PhoneAccessSettingsCard: View {
                     )
                 )
                 .settingsLandingAnchor("server.phoneAccess")
+                Toggle("Allow phone to view this Mac's screen", isOn: Binding(
+                    get: { screen.allowed }, set: { screen.setAllowed($0) }
+                ))
+                .settingsLandingAnchor("server.phoneAccess.screen")
+                Text("Screen Recording: \(screenPermission ? "Granted" : "Not granted")")
+                    .font(.caption)
+                Button("Open Screen Recording Settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .settingsLandingAnchor("server.phoneAccess.screenPermission")
+                Text("The phone Screen panel shows the main display. A menu-bar indicator appears while viewing. Actions use a Computer Use agent and its existing approvals; keep a Mac chat window open for approval cards.")
+                    .font(.caption)
                 Text("Status: \(service.state.phase.rawValue)")
                 if let error = service.state.error { Text(error).foregroundStyle(.red) }
                 if let url = service.state.loginURL {
@@ -84,7 +100,11 @@ struct PhoneAccessSettingsCard: View {
                 .settingsLandingAnchor("server.phoneAccess.saveDevices")
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            screenPermission = SystemScreenshotPermissionChecker().hasScreenRecordingPermission()
+        }
         .onAppear {
+            screenPermission = SystemScreenshotPermissionChecker().hasScreenRecordingPermission()
             logins = service.allowedLogins
             restrictDevices = service.restrictDevices
             selectedIDs = service.allowedDeviceIDs

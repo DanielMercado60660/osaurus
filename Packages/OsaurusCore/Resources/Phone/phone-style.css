@@ -9,3 +9,13 @@
 #avatar-large{display:block;width:min(280px,80vw);height:min(280px,80vw)}
 #companion-caption{position:relative;max-width:36em;margin:8px auto 0;padding:16px 20px;background:var(--card);border:1px solid #889d92;border-radius:20px;white-space:pre-wrap;overflow-wrap:anywhere}
 #companion-caption::before{content:"";position:absolute;top:-9px;left:calc(50% - 8px);width:16px;height:16px;background:var(--card);border-left:1px solid #889d92;border-top:1px solid #889d92;transform:rotate(45deg)}
+
+#screen-panel[hidden]{display:none}
+nav{display:flex;gap:8px}
+#screen-viewport{overflow:auto;max-height:60dvh;border-radius:12px;background:var(--card);touch-action:pan-x pan-y pinch-zoom}
+#screen-enlarge{display:block;padding:0;border:0;max-width:none;min-width:100%;touch-action:pan-x pan-y pinch-zoom}
+#screen-enlarge[hidden]{display:none}
+#screen-image{display:block;width:100%;max-width:100%;height:auto;touch-action:pan-x pan-y pinch-zoom}
+#screen-image.enlarged{width:1280px;max-width:none}
+#screen-panel h2{font-size:1rem}
+#screen-agent-hint,#screen-status{font-size:.85rem}

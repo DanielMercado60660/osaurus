@@ -4,6 +4,19 @@ let history = [], controller, recording, micStream, holding = false, busy = fals
 let audioContext, speechQueue, speakerEnabled=false, talkActive=false, talkController;
 const agentsByID=new Map();
 const companion=new PhoneCompanion($('avatar-small'),$('avatar-large'),$('companion-caption'));
+const screenPanel=new PhoneScreenPanel({get:$,onModeChange:()=>{
+  const previousAgent=$('agents').value;
+  stopVoice();populateAgents();if($('agents').value!==previousAgent)clearChat();
+}});
+function populateAgents() {
+  const selected=$('agents').value;
+  const agents=screenPanel.open?phoneComputerUseAgents([...agentsByID.values()]):[...agentsByID.values()];
+  $('agents').replaceChildren();
+  for(const agent of agents){const option=document.createElement('option');option.value=agent.id;option.textContent=agent.name;$('agents').append(option);}
+  if(agents.some(a=>a.id===selected))$('agents').value=selected;
+  $('screen-agent-hint').textContent=agents.length?'Choose a Computer Use agent above.':'No Computer Use agents. On the Mac, create a custom agent, enable Tools and enable Computer Use under Agents → Configure → Subagents.';
+  setBusy(busy);
+}
 function companionMood(input) { companion.setInput(input); }
 function companionError(error) {
   companionMood(error.name==='AbortError'?{}:{error:true});
@@ -22,6 +35,7 @@ function voiceButtons() {
   $('speaker').setAttribute('aria-pressed',String(speakerEnabled));
   $('talk').textContent=talkActive?'End talk / Interrupt':'Talk mode';
   $('talk').setAttribute('aria-pressed',String(talkActive));
+  $('talk').disabled=!$('agents').value||(busy&&!talkActive);
   $('avatar-toggle').hidden=talkActive;$('companion-stage').hidden=!talkActive;
   $('avatar-toggle').disabled=$('talk').hidden||busy||!!talkController||!$('agents').value;
   companion.setActive(talkActive);
@@ -76,8 +90,9 @@ function message(role, text) {
   const body=document.createElement('div'); markdown(body,text); article.append(label,body); $('chat').append(article); return body;
 }
 function setBusy(value) {
-  busy=value; const locked=value||!!talkController; $('send').disabled=locked; $('agents').disabled=locked; $('new').disabled=locked;
-  $('mic').disabled=locked&&!holding; $('stop').hidden=!locked;voiceButtons();
+  busy=value; const locked=value||!!talkController; $('send').disabled=locked||!$('agents').value; $('agents').disabled=locked; $('new').disabled=locked;
+  $('screen-tab').disabled=locked;$('chat-tab').disabled=locked;
+  $('mic').disabled=(locked&&!holding)||!$('agents').value; $('stop').hidden=!locked;voiceButtons();
 }
 async function checked(response) {
   if (!response.ok) { let detail = await response.text(); try { const j=JSON.parse(detail); detail=j.error?.message||j.message||detail; } catch {} throw new Error(`${response.status}: ${detail.slice(0,400)}`); }
@@ -86,6 +101,7 @@ async function checked(response) {
 async function sendMessage(text=$('prompt').value.trim()) {
   if(busy) return false;
   const agent=$('agents').value; if(!text||!agent) return false;
+  if(screenPanel.open&&!phoneComputerUseAgents([agentsByID.get(agent)]).length)return false;
   $('prompt').value=''; message('user',text);
   const turn=[...history,{role:'user',content:text}], output=message('assistant','…'); let answer='', ended=false;
   controller=new AbortController(); setBusy(true); status(talkActive?'Thinking…':'Agent is working…');
@@ -105,6 +121,7 @@ async function sendMessage(text=$('prompt').value.trim()) {
       const data=raw.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
       if(!data) return; if(data==='[DONE]'){ended=true;return;}
       const item=JSON.parse(data); if(item.error) throw new Error(item.error.message||String(item.error));
+      screenPanel.poller.streamEvent(item);
       const delta=item.choices?.[0]?.delta;
       if(delta?.content){ answer+=delta.content; markdown(output,answer); if(queue)speak(release.append(delta.content)); }
       if(delta?.tool_calls) status('Agent is using tools…');
@@ -118,14 +135,14 @@ async function sendMessage(text=$('prompt').value.trim()) {
     if(controller.signal.aborted)throw new DOMException('Stopped','AbortError');
     history=[...turn,{role:'assistant',content:answer}]; success=true;status('Ready');companionMood({});companion.react('happy');
   } catch(error) { controller?.abort(); queue?.interrupt(); companionError(error);status(error.name==='AbortError'?'Stopped. Partial reply was not added to history.':error.message); if(!answer) output.textContent='No completed reply.'; }
-  finally{clearInterval(speechTimer); controller=null;speechQueue=null;setBusy(false);if(!talkActive)$('prompt').focus();}
+  finally{screenPanel.poller.refresh();clearInterval(speechTimer); controller=null;speechQueue=null;setBusy(false);if(!talkActive)$('prompt').focus();}
   return success;
 }
 $('composer').addEventListener('submit',async event=>{event.preventDefault();if(!talkController)await sendMessage();});
 $('stop').onclick=()=>{stopVoice();status('Stopped.');setBusy(busy);};
 $('talk').onclick=async()=>{
   if(talkActive){stopVoice();status('Stopped.');return;}
-  if(busy||talkController)return;
+  if(busy||talkController||!$('agents').value)return;
   if(!window.isSecureContext){status('Microphone requires HTTPS. Open the HTTPS phone URL from the Mac.');return;}
   talkActive=true;talkController=new AbortController();const signal=talkController.signal;
   speakerEnabled=true;voiceButtons();setBusy(false);
@@ -178,7 +195,8 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden){stopVoice(
 (async()=>{
   try {
     const data=await (await checked(await fetch('/agents'))).json();
-    for(const agent of data.agents||[]){agentsByID.set(agent.id,agent);const option=document.createElement('option');option.value=agent.id;option.textContent=agent.name;$('agents').append(option);}
+    for(const agent of data.agents||[])agentsByID.set(agent.id,agent);
+    populateAgents();
     companion.setAgent(agentsByID.get($('agents').value));
     status($('agents').options.length?'Ready':'Create an agent on your Mac first.');
     const capabilities=await (await checked(await fetch('/phone/capabilities'))).json();

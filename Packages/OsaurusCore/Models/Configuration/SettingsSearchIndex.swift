@@ -968,6 +968,18 @@ public enum SettingsSearchIndex {
             disambiguation: "Private tailnet access. Separate from Mobile pairing and the public relay."
         ),
         .init(
+            id: "server.phoneAccess.screen", tab: .server, section: "Phone access over Tailscale",
+            title: "Allow phone to view this Mac's screen",
+            keywords: ["phone", "screen", "remote screen", "screenshot", "tailscale"], subTab: "Overview",
+            disambiguation: "Opt-in screen preview for verified Tailscale phone owners. Separate from per-agent Computer Use and screen context."
+        ),
+        .init(
+            id: "server.phoneAccess.screenPermission", tab: .server, section: "Phone access over Tailscale",
+            title: "Open Screen Recording Settings",
+            keywords: ["phone", "screen recording", "permission", "macOS"], subTab: "Overview",
+            disambiguation: "Opens macOS Screen Recording permissions for phone screen viewing. Does not grant permission automatically."
+        ),
+        .init(
             id: "server.phoneAccess.login", tab: .server, section: "Phone access over Tailscale",
             title: "Sign in to Tailscale", keywords: ["phone", "tailscale login"], subTab: "Overview",
             disambiguation: "Private tailnet access. Separate from Mobile pairing and the public relay."
