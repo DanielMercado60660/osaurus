@@ -1,17 +1,32 @@
 import AVFoundation
 import CoreAudio
 import Foundation
+import os
 
 /// Talk-only capture/render graph. VPIO uses one duplex engine; when a selected
 /// input cannot share the default output with AEC, capture gets its own engine.
 final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
     private let benchmark: TalkBenchmarkAudio? = TalkBenchmarkConfiguration.inputRequested ? TalkBenchmarkAudio() : nil
     var usesFileInput: Bool { benchmark != nil }
+    var benchmarkHasUserOverlap: Bool { benchmark?.hasUserOverlap ?? false }
+    var benchmarkEchoMixedSamples: Int { benchmark?.echoMixedSamples ?? 0 }
+    func resetBenchmarkUserOverlap() { benchmark?.resetUserOverlap() }
     var isBenchmarkRendering: Bool { benchmark?.isRendering ?? false }
 
     func playInput(_ url: URL, leadingMs: Int, trailingMs: Int) async throws {
         guard let benchmark else { throw TalkBenchmarkError("File input is not enabled") }
         try await benchmark.playInput(url, leadingMs: leadingMs, trailingMs: trailingMs)
+    }
+
+    private let logger = Logger(subsystem: "ai.osaurus", category: "talk.audio")
+    private let statusLock = NSLock()
+    private var offReason = "Not started"
+    var aecOffReason: String { statusLock.withLock { offReason } }
+    private func setAECReason(_ reason: String) { statusLock.withLock { offReason = reason } }
+    private var rawOutputHandler: (@Sendable (Float) -> Void)?
+    func setRawOutputHandler(_ handler: @escaping @Sendable (Float) -> Void) {
+        if let benchmark { benchmark.setRawLevel(handler); return }
+        queue.async { self.rawOutputHandler = handler }
     }
 
     private let queue = DispatchQueue(label: "ai.osaurus.talk.audio", qos: .userInitiated)
@@ -31,6 +46,7 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
     private var observers: [NSObjectProtocol] = []
     private lazy var recovery = TalkRouteRecovery(queue: queue)
     private var wantsPlayback = false
+    private var playbackPaused = false
     private struct Pending {
         let id: UUID
         let samples: [Float]
@@ -48,15 +64,17 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
                routeChanged: @escaping @Sendable () -> Void,
                aecChanged: @escaping @Sendable (Bool) -> Void = { _ in }) async throws -> (AVAudioFormat, Bool) {
         if let benchmark {
-            _ = try TalkBenchmarkConfiguration.parse(ProcessInfo.processInfo.environment)
-            benchmark.start(capture: capture)
+            let config = try TalkBenchmarkConfiguration.parse(ProcessInfo.processInfo.environment)
+            setAECReason("File-input harness (no Apple voice processing)")
+            logger.notice("AEC off: file-input harness; input=mono 16000 Hz; no hardware devices")
+            benchmark.start(echo: config?.echo, capture: capture)
             return (captureFormat, false)
         }
         return try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 do {
                     let aec = try self.configureWithFallback(requested: voiceProcessing, deviceID: deviceID, capture: capture)
-                    self.observeRoute(aec: aec, deviceID: deviceID, capture: capture,
+                    self.observeRoute(aec: voiceProcessing, deviceID: deviceID, capture: capture,
                                       failed: routeChanged, aecChanged: aecChanged)
                     continuation.resume(returning: (self.captureFormat, aec))
                 } catch {
@@ -67,8 +85,9 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
         }
     }
 
-    private static func defaultInputDevice() -> AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+    private static func defaultInputDevice() -> AudioDeviceID? { defaultDevice(kAudioHardwarePropertyDefaultInputDevice) }
+    private static func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var device = AudioDeviceID(0)
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -81,14 +100,30 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
                                        capture: @escaping @Sendable ([Float], Float) -> Void) throws -> Bool {
         // A non-default input would redirect VPIO's shared IO unit. Separate
         // capture/render engines preserve the default speaker without an aggregate.
-        let useAEC = TalkAudioPolicy.canUseAEC(requested: requested, selectedInput: deviceID,
-                                               defaultInput: Self.defaultInputDevice())
+        let defaultInput = Self.defaultInputDevice()
+        let useAEC = TalkAudioPolicy.canUseAEC(requested: requested, selectedInput: deviceID, defaultInput: defaultInput)
+        setAECReason(TalkAudioPolicy.aecOffReason(requested: requested))
+        var active = false
+        defer { logAEC(active: active, selected: deviceID, defaultInput: defaultInput) }
         if useAEC {
-            do { try configure(aec: true, deviceID: deviceID, capture: capture); return true }
-            catch { discardGraph() }
+            do {
+                try configure(aec: true, deviceID: deviceID, capture: capture)
+                setAECReason("")
+                active = true
+                return true
+            } catch {
+                let reason = TalkAudioPolicy.aecOffReason(requested: requested, failure: error.localizedDescription)
+                setAECReason(reason)
+                logger.notice("VPIO error: \(String(describing: error), privacy: .public)")
+                discardGraph()
+            }
         }
         try configure(aec: false, deviceID: deviceID, capture: capture)
         return false
+    }
+
+    private func logAEC(active: Bool, selected: AudioDeviceID?, defaultInput: AudioDeviceID?) {
+        logger.notice("AEC=\(active) requested/selected input=\(selected ?? 0) default input=\(defaultInput ?? 0) default output=\(Self.defaultDevice(kAudioHardwarePropertyDefaultOutputDevice) ?? 0) input rate=\(self.inputFormat?.sampleRate ?? 0) channels=\(self.inputFormat?.channelCount ?? 0) reason=\(self.aecOffReason, privacy: .public)")
     }
 
     private func configure(aec: Bool, deviceID: AudioDeviceID?,
@@ -131,6 +166,7 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
                 let now = ProcessInfo.processInfo.systemUptime
                 guard now - self.lastMeterTime >= 1.0 / 30 else { return }
                 self.lastMeterTime = now
+                self.rawOutputHandler?(rms)
                 self.levelHandler?(self.meter.update(rms: rms))
             }
         }
@@ -138,7 +174,7 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
         try output.start()
         if inputEngine !== output { inputEngine.prepare(); try inputEngine.start() }
         inputFormat = input.outputFormat(forBus: 0)
-        if wantsPlayback { player.play() }
+        if wantsPlayback && !playbackPaused { player.play() }
     }
 
     private func observeRoute(aec: Bool, deviceID: AudioDeviceID?,
@@ -160,7 +196,7 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
                         do {
                             self.discardGraph()
                             let nextAEC = try self.configureWithFallback(requested: aec, deviceID: deviceID, capture: capture)
-                            self.observeRoute(aec: nextAEC, deviceID: deviceID, capture: capture,
+                            self.observeRoute(aec: aec, deviceID: deviceID, capture: capture,
                                               failed: failed, aecChanged: aecChanged)
                             // Old node callbacks are invalid, but reply generation
                             // and pending PCM survive. Replay each outstanding buffer once.
@@ -182,7 +218,7 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
                 }
                 self.wantsPlayback = true
                 // A stopped graph with a pending rebuild will resume this player.
-                if self.engine?.isRunning == true { player.play() }
+                if self.engine?.isRunning == true && !self.playbackPaused { player.play() }
                 continuation.resume()
             }
         }
@@ -218,6 +254,25 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
         }
     }
 
+    /// Pause preserves scheduled buffers and stream backpressure. Cancellation
+    /// is deferred until final ASR confirms that this was a real user segment.
+    func pausePlayback() {
+        if let benchmark { benchmark.pause(); return }
+        queue.async {
+            self.playbackPaused = true
+            self.player?.pause()
+            self.rawOutputHandler?(0)
+            self.levelHandler?(0)
+        }
+    }
+    func resumePlayback() {
+        if let benchmark { benchmark.resume(); return }
+        queue.async {
+            self.playbackPaused = false
+            if self.wantsPlayback && self.engine?.isRunning == true { self.player?.play() }
+        }
+    }
+
     func cancelPlayback() {
         if let benchmark { benchmark.cancel(); return }
         queue.async { self.cancelLocked() }
@@ -226,6 +281,8 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
     private func cancelLocked() {
         generation += 1
         wantsPlayback = false
+        playbackPaused = false
+        rawOutputHandler?(0)
         player?.stop()
         player?.reset()
         let cancelled = pending

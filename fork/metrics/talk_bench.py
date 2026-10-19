@@ -83,7 +83,7 @@ def prepare_root(root, model_id, model_dir):
     write_json(root / "config/server.json", {"port": port})
 
 
-def run_scenario(binary, root, wavs, model_id, model_dir, barge_ms=None):
+def run_scenario(binary, root, wavs, model_id, model_dir, barge_ms=None, echo_db=None, echo_delay_ms=30):
     prepare_root(root, model_id, model_dir)
     metrics = root / "turns.json"
     env = {key: value for key, value in os.environ.items() if not key.startswith("OSAURUS_TALK_")}
@@ -95,6 +95,9 @@ def run_scenario(binary, root, wavs, model_id, model_dir, barge_ms=None):
                GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="credential.helper", GIT_CONFIG_VALUE_0="")
     if barge_ms is not None:
         env["OSAURUS_TALK_BARGE_IN_AFTER_MS"] = str(barge_ms)
+    if echo_db is not None:
+        env["OSAURUS_TALK_ECHO_DB"] = str(echo_db)
+        env["OSAURUS_TALK_ECHO_DELAY_MS"] = str(echo_delay_ms)
     error = None
     with (root / "app.log").open("w") as log:
         process = subprocess.Popen([str(binary)], env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -124,9 +127,17 @@ def run_scenario(binary, root, wavs, model_id, model_dir, barge_ms=None):
                 and all(row.get("reasoningDeltaCount") == 0 or measured(row, "firstReasoningMs") for row in turns))
     if barge_ms is not None:
         complete = complete and status.get("bargeInAttempted") is True and status.get("bargeInObserved") is True
+    if echo_db is not None:
+        complete = (complete and status.get("selfBargeIns") == 0
+                    and status.get("echoSegmentsSent") == 0
+                    and status.get("tentativeSelfPauses") == 0
+                    and isinstance(status.get("echoRejectedSegments"), int)
+                    and status["echoRejectedSegments"] >= 0
+                    and status.get("echoMixedSamples", 0) > 0)
     return {"status": "COMPLETE" if complete else "PARTIAL", "exit_code": process.returncode,
             "watchdog_error": error, "completion": status, "summary": stats, "turns": turns,
-            "evidence_root": str(root), "barge_in_after_ms": barge_ms}
+            "evidence_root": str(root), "barge_in_after_ms": barge_ms,
+            "echo_db": echo_db, "echo_delay_ms": echo_delay_ms if echo_db is not None else None}
 
 
 def main():
@@ -157,10 +168,13 @@ def main():
         wavs.append(wav)
     baseline = run_scenario(binary, root / "baseline", wavs, model_id, model_dir)
     barge = run_scenario(binary, root / "barge-in", wavs[:2], model_id, model_dir, barge_ms=800)
+    echo = run_scenario(binary, root / "echo", wavs, model_id, model_dir, echo_db=-20)
+    echo_barge = run_scenario(binary, root / "echo-barge-in", wavs[:2], model_id, model_dir,
+                              barge_ms=800, echo_db=-20)
     pins = json.loads((HERE.parents[1] / "Packages/OsaurusCore/Package.resolved").read_text())["pins"]
     generation = model_dir / "generation_config.json"
     result = {"label": label, "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-              "status": "COMPLETE" if baseline["status"] == barge["status"] == "COMPLETE" else "PARTIAL",
+              "status": "COMPLETE" if all(row["status"] == "COMPLETE" for row in (baseline, barge, echo, echo_barge)) else "PARTIAL",
               "evidence": "Software latency through real models and paced null audio. Not acoustic or release proof.",
               "checkout_sha": subprocess.check_output(["git", "-C", str(HERE), "rev-parse", "HEAD"], text=True).strip(),
               "app_source_sha": os.environ.get("APP_SOURCE_SHA", "unverified: set APP_SOURCE_SHA to the app's actual build SHA"),
@@ -173,7 +187,7 @@ def main():
                   "enable_thinking": "false only when the bundle declares a thinking toggle; otherwise omitted"}, "speech_resources": resources,
               "tts": {"provider": "pocketTTS", "voice": "alba", "temperature": 0.7},
               "inputs": [{"question": q, "wav": str(w), "sha256": digest(w)} for q, w in zip(questions, wavs)],
-              "baseline": baseline, "barge_in": barge}
+              "baseline": baseline, "barge_in": barge, "echo": echo, "echo_barge_in": echo_barge}
     (HERE / "results").mkdir(exist_ok=True)
     write_json(HERE / "results" / f"talk-{label}.json", result)
     print(json.dumps(result, indent=2))

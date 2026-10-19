@@ -71,17 +71,18 @@ struct TalkModeTests {
         if speaking { _ = step(&s, .firstAudio(epoch: old)) }
         _ = step(&s, .speechStarted(segment: 2, at: 3))
         #expect(step(&s, .tick(3.15)).isEmpty)
-        #expect(step(&s, .tick(3.17)) == [.cancelReply])
+        #expect(step(&s, .tick(3.31)) == (speaking ? [.pauseReply] : []))
         #expect(s.state == .userSpeaking)
         #expect(s.speechStart == 3) // onset is retained
+        #expect(s.epoch == old) // tentative, so the original reply stays resumable
+        _ = step(&s, .final(segment: 1, text: "late previous ASR"))
+        _ = step(&s, .speechEnded(segment: 2, at: 3.6))
+        #expect(step(&s, .final(segment: 2, text: "Actually, stop.")) == [.cancelReply])
         #expect(s.epoch > old)
         let accepted = s
         _ = step(&s, .firstAudio(epoch: old))
-        _ = step(&s, .replyFinished(epoch: old, at: 3.2))
-        _ = step(&s, .final(segment: 1, text: "late previous ASR"))
+        _ = step(&s, .replyFinished(epoch: old, at: 3.7))
         #expect(s == accepted)
-        _ = step(&s, .speechEnded(segment: 2, at: 3.6))
-        _ = step(&s, .final(segment: 2, text: "Actually, stop."))
         #expect(step(&s, .tick(4.31)) == [.send(text: "Actually, stop.", epoch: s.epoch, speechEnd: 3.6)])
     }
 
@@ -104,13 +105,13 @@ struct TalkModeTests {
 
     @Test func fallbackThresholdAndCooldown() {
         #expect(TalkModeReducer.vadThreshold(aecActive: false, playback: true) == 0.75)
-        #expect(TalkModeReducer.vadThreshold(aecActive: true, playback: true) == 0.5)
+        #expect(TalkModeReducer.vadThreshold(aecActive: true, playback: true) == 0.65)
         #expect(TalkModeReducer.vadThreshold(aecActive: false, playback: false) == 0.5)
         var s = thinking()
         _ = step(&s, .firstAudio(epoch: s.epoch))
         _ = step(&s, .replyFinished(epoch: s.epoch, at: 3))
         _ = step(&s, .speechStarted(segment: 2, at: 3.2))
-        #expect(s.state == .listening)
+        #expect(s.state == .userSpeaking) // cooldown raises VAD; it does not ignore real speech
         _ = step(&s, .speechStarted(segment: 3, at: 3.31))
         #expect(s.state == .userSpeaking)
         let gate = TalkSpeechGate(silenceMs: 700)
@@ -224,7 +225,8 @@ struct TalkModeCompletionRaceTests {
         let config = TalkModeConfiguration.default
         s = TalkModeReducer.reduce(s, .speechStarted(segment: 7, at: 1), config: config).0
         let result = TalkModeReducer.reduce(s, .speechEnded(segment: 7, at: 1.4), config: config)
-        #expect(result.1 == [.cancelReply])
+        #expect(result.1.isEmpty) // thinking reply remains tentative until final ASR
+        #expect(result.0.tentativeReplyState == .thinking)
         #expect(result.0.state == .endOfTurn)
         #expect(result.0.speechDuration > 0.39)
     }

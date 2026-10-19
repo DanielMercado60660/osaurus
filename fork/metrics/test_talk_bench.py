@@ -80,7 +80,7 @@ class TalkBenchTests(unittest.TestCase):
             self.assertEqual(json.loads((base / "root/config/default-agent.json").read_text()), {"defaultModel": "owner/model"})
             self.assertEqual(json.loads((base / "root/config/voice/speech.json").read_text())["voiceInputEnabled"], False)
 
-    def scenario(self, rows, status=None, exit_code=0, barge=None):
+    def scenario(self, rows, status=None, exit_code=0, barge=None, echo=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "scenario"
             def launch(args, *, env, stdout, stderr):
@@ -95,7 +95,7 @@ class TalkBenchTests(unittest.TestCase):
                     def wait(self, timeout): return exit_code
                 return Process()
             with patch.object(bench.subprocess, "Popen", launch):
-                return bench.run_scenario(Path("/fake/osaurus"), root, [Path("/input.wav")], "test/model", Path(temporary), barge)
+                return bench.run_scenario(Path("/fake/osaurus"), root, [Path("/input.wav")], "test/model", Path(temporary), barge, echo_db=echo)
 
     def test_complete_latency_samples(self):
         result = self.scenario([complete_row()], {"error": None})
@@ -108,6 +108,16 @@ class TalkBenchTests(unittest.TestCase):
                                    ([{"firstTokenMs": 10, "firstAudioMs": 20}], {"error": None}, 1),
                                    ([{"firstTokenMs": 10, "firstAudioMs": 20}], {"error": "recognition failed"}, 0)]:
             self.assertEqual(self.scenario(rows, status, code)["status"], "PARTIAL")
+
+    def test_echo_requires_injection_and_zero_self_turns(self):
+        status = {"error": None, "selfBargeIns": 0, "echoSegmentsSent": 0,
+                  "echoRejectedSegments": 2, "echoMixedSamples": 16000, "tentativeSelfPauses": 0}
+        self.assertEqual(self.scenario([complete_row()], status, echo=-20)["status"], "COMPLETE")
+        for key, value in [("selfBargeIns", 1), ("echoSegmentsSent", 1),
+                           ("echoRejectedSegments", None), ("echoMixedSamples", 0), ("tentativeSelfPauses", 1)]:
+            failed = dict(status, **{key: value})
+            self.assertEqual(self.scenario([complete_row()], failed, echo=-20)["status"], "PARTIAL")
+        self.assertEqual(self.scenario([complete_row()], {"error": None}, echo=-20)["status"], "PARTIAL")
 
     def test_barge_requires_attempt_and_observation(self):
         rows = [dict(complete_row(), bargeInToStopMs=1)]

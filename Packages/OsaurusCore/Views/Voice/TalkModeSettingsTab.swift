@@ -104,7 +104,6 @@ struct TalkModeComposerControl: View {
                 }
                 .accessibilityElement(children: .combine)
             }
-            #if DEBUG
             if ownsWindow {
                 Button { showMetrics.toggle() } label: { Image(systemName: "gauge.with.dots.needle.33percent") }
                     .buttonStyle(.plain)
@@ -112,7 +111,9 @@ struct TalkModeComposerControl: View {
                     .popover(isPresented: $showMetrics) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Talk latency • \(talk.latency.turns.count) turns").font(.headline)
-                            Text(talk.aecActive ? "Voice processing active" : "Echo fallback active")
+                            Text(talk.aecStatus).frame(maxWidth: 360, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Echo segments rejected: \(talk.echoRejectedSegments)")
                             Text(metric("First token", \.firstTokenMs))
                             Text(metric("First audio buffer", \.firstAudioMs))
                             Text(metric("Barge-in to player stop", \.bargeInToStopMs))
@@ -127,7 +128,6 @@ struct TalkModeComposerControl: View {
                         }.padding()
                     }
             }
-            #endif
             Button { talk.toggle(agentID: agentID, windowID: windowID) } label: {
                 Image(systemName: ownsWindow ? "waveform.circle.fill" : "waveform.circle")
                     .font(.system(size: 20))
