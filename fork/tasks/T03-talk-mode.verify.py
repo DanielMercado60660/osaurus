@@ -49,7 +49,7 @@ with (src/'ProofStubs.swift').open('a') as f:
 import Combine
 import SwiftUI
 import AVFoundation
-@MainActor final class ToastManager { static let shared = ToastManager(); func error(_ title: String, message: String) {} }
+@MainActor final class ToastManager { static let shared = ToastManager(); func error(_ title: String, message: String) {}; func info(_ title: String, message: String) {} }
 struct Agent: Identifiable { static let defaultId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!; let id: UUID; let name: String; var ttsVoice: String? = nil }
 @MainActor final class AgentManager: ObservableObject {
     static let shared = AgentManager()
@@ -103,6 +103,7 @@ enum AssistantDeltaEvent { case delta(turnId: UUID, text: String), finished, can
 @MainActor final class TTSService {
     static let shared = TTSService()
     let isModelReady = true
+    func stop() {}
     func beginTalkStream(id: String, duplex: TalkAudioEngine, voiceOverride: String? = nil) -> TTSStreamHandle {
         TTSStreamHandle(id: id, player: duplex, synthesize: { _, _ in })
     }

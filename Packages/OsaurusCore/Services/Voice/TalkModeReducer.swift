@@ -13,7 +13,12 @@ struct TalkModeSnapshot: Equatable, Sendable {
     var speechStart: TimeInterval?
     var speechEnd: TimeInterval?
     var speechDuration: TimeInterval = 0
-    var transcript: String?
+    var segments: [Int] = []
+    var transcripts: [Int: String] = [:]
+    var transcript: String? {
+        guard !segments.isEmpty, segments.allSatisfy({ transcripts[$0] != nil }) else { return nil }
+        return segments.compactMap { transcripts[$0] }.filter { !$0.isEmpty }.joined(separator: " ")
+    }
     var caption = ""
     var candidateSegment: Int?
     var candidateStart: TimeInterval?
@@ -24,6 +29,9 @@ struct TalkModeSnapshot: Equatable, Sendable {
 enum TalkModeEvent: Equatable {
     case start(aec: Bool)
     case stop
+    case turnFailed(epoch: UInt64)
+    case recognitionFailed(segment: Int)
+    case aecChanged(Bool)
     case speechStarted(segment: Int, at: TimeInterval)
     case speechEnded(segment: Int, at: TimeInterval)
     case partial(segment: Int, text: String)
@@ -54,6 +62,27 @@ enum TalkModeReducer {
         case .stop:
             effects = s.state == .off ? [] : [.cancelReply]
             s = TalkModeSnapshot(epoch: s.epoch + 1)
+        case .aecChanged(let active):
+            s.aecActive = active
+        case .turnFailed(let epoch):
+            guard s.state != .off, s.epoch == epoch else { break }
+            effects = [.cancelReply]
+            let candidate = s.candidateSegment
+            let start = s.candidateStart
+            s = TalkModeSnapshot(state: .listening, epoch: s.epoch + 1, aecActive: s.aecActive)
+            if let candidate, let start {
+                s.candidateSegment = candidate
+                s.candidateStart = start
+                acceptCandidate(&s)
+            }
+        case .recognitionFailed(let segment):
+            guard s.state != .off, s.segments.contains(segment) else { break }
+            // A failed segment contributes no text; keep any newer speech intact.
+            s.transcripts[segment] = ""
+            s.caption = s.transcript ?? ""
+            if s.segment == segment, s.state == .userSpeaking || s.state == .endOfTurn {
+                s = TalkModeSnapshot(state: .listening, epoch: s.epoch + 1, aecActive: s.aecActive)
+            }
         case .speechStarted(let segment, let now):
             guard s.state != .off, now >= s.ignoreUntil else { break }
             if s.state == .thinking || s.state == .speaking {
@@ -63,9 +92,13 @@ enum TalkModeReducer {
             } else {
                 if s.segment != segment {
                     s.epoch += 1
-                    s.speechDuration = 0
-                    s.transcript = nil
-                    s.caption = ""
+                    if s.state != .endOfTurn {
+                        s.speechDuration = 0
+                        s.segments = []
+                        s.transcripts = [:]
+                        s.caption = ""
+                    }
+                    s.segments.append(segment)
                 }
                 s.segment = segment
                 s.speechStart = now
@@ -92,9 +125,9 @@ enum TalkModeReducer {
             guard s.segment == segment, s.state == .userSpeaking || s.state == .endOfTurn else { break }
             s.caption = text
         case .final(let segment, let text):
-            guard s.segment == segment, s.state == .userSpeaking || s.state == .endOfTurn else { break }
-            s.transcript = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            s.caption = s.transcript ?? ""
+            guard s.segments.contains(segment), s.state == .userSpeaking || s.state == .endOfTurn else { break }
+            s.transcripts[segment] = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            s.caption = s.segments.compactMap { s.transcripts[$0] }.joined(separator: " ")
         case .tick(let now):
             if let start = s.candidateStart, s.candidateSegment != nil,
                now - start >= Double(config.bargeInMinSpeechMs) / 1000 {
@@ -140,7 +173,8 @@ enum TalkModeReducer {
         s.speechStart = s.candidateStart
         s.speechEnd = nil
         s.speechDuration = 0
-        s.transcript = nil
+        s.segments = s.segment.map { [$0] } ?? []
+        s.transcripts = [:]
         s.caption = ""
         s.candidateStart = nil
         s.candidateSegment = nil
@@ -161,7 +195,7 @@ public struct TalkTurnLatency: Codable, Equatable, Sendable {
     public let speechEnd: TimeInterval
     public var firstTokenMs: Double?
     public var firstAudioMs: Double?
-    /// Time from confirmed barge-in to synchronous player stop; not acoustic proof.
+    /// Null-sink confirmed barge-in to synchronous stop; hardware async stop is unmeasured.
     public var bargeInToStopMs: Double?
 }
 
@@ -208,4 +242,128 @@ enum TalkCaptureEvent: Sendable {
     case partial(segment: Int, text: String)
     case final(segment: Int, text: String)
     case failed(String)
+    case recognitionFailed(segment: Int, message: String)
+    case aecChanged(Bool)
+}
+
+
+/// Hardware-independent route decisions, shared by startup and coalesced rebuilds.
+enum TalkAudioPolicy {
+    static func needsRebuild(running: Bool, inputUnchanged: Bool) -> Bool { !running || !inputUnchanged }
+    static func canUseAEC(requested: Bool, selectedInput: UInt32?, defaultInput: UInt32?) -> Bool {
+        requested && (selectedInput == nil || selectedInput == defaultInput)
+    }
+    static func speakingBelongsToSurface(talkActive: Bool, owner: UUID?, surface: UUID) -> Bool {
+        !talkActive || owner == surface
+    }
+}
+
+/// One speculative final per uninterrupted silence. Committing consumes the
+/// speculation; renewed speech invalidates it without losing the utterance audio.
+struct TalkFinalizationPolicy {
+    private(set) var speculative = false
+    enum Action: Equatable { case none, speculate, cancelSpeculation, finalize(reuse: Bool) }
+    mutating func update(active: Bool, silence: Double, endSilence: Double, sampleCount: Int) -> Action {
+        if sampleCount >= 16_000 * 120 {
+            let reuse = speculative && !active
+            speculative = false
+            return .finalize(reuse: reuse)
+        }
+        if active {
+            if speculative { speculative = false; return .cancelSpeculation }
+            return .none
+        }
+        if silence >= endSilence {
+            let reuse = speculative
+            speculative = false
+            return .finalize(reuse: reuse)
+        }
+        if silence >= 0.275 && !speculative { speculative = true; return .speculate }
+        return .none
+    }
+}
+
+/// Remember a toggle received during asynchronous capture teardown.
+struct TalkRestartRequest {
+    private(set) var pending = false
+    private(set) var agentID: UUID?
+    private(set) var windowID: UUID?
+    mutating func queue(agentID: UUID?, windowID: UUID?) {
+        pending = true; self.agentID = agentID; self.windowID = windowID
+    }
+    mutating func take() -> (agentID: UUID?, windowID: UUID?)? {
+        guard pending else { return nil }
+        defer { self = Self() }
+        return (agentID, windowID)
+    }
+}
+
+/// Recognition delivery is independent of task completion order. Speculation
+/// cannot publish until silence commits, and invalidated jobs cannot publish.
+struct TalkRecognitionLedger {
+    enum Kind { case preview, speculative, final }
+    enum Result: Equatable { case text(String), failure(String) }
+    struct Delivery: Equatable { let segment: Int; let final: Bool; let result: Result }
+    private struct Entry { let segment: Int; var kind: Kind; var result: Result? }
+    private var entries: [UUID: Entry] = [:]
+    private(set) var speculativeID: UUID?
+    mutating func begin(segment: Int, kind: Kind) -> UUID {
+        let id = UUID()
+        entries[id] = Entry(segment: segment, kind: kind)
+        if kind == .speculative { speculativeID = id }
+        return id
+    }
+    mutating func cancelPreviews() -> [UUID] {
+        let ids = entries.filter { $0.value.kind == .preview }.map(\.key)
+        for id in ids { entries[id] = nil }
+        return ids
+    }
+    mutating func cancelSpeculation() -> UUID? {
+        guard let id = speculativeID else { return nil }
+        entries[id] = nil
+        speculativeID = nil
+        return id
+    }
+    mutating func commitSpeculation() -> Delivery? {
+        guard let id = speculativeID, var entry = entries[id] else { return nil }
+        speculativeID = nil
+        entry.kind = .final
+        entries[id] = entry
+        if let result = entry.result { return complete(id, result: result) }
+        return nil
+    }
+    mutating func complete(_ id: UUID, result: Result) -> Delivery? {
+        guard var entry = entries[id] else { return nil }
+        if entry.kind == .speculative {
+            entry.result = result
+            entries[id] = entry
+            return nil
+        }
+        entries[id] = nil
+        return Delivery(segment: entry.segment, final: entry.kind == .final, result: result)
+    }
+}
+
+
+/// Queue-confined debounce. A cancelled work item can still be dequeued by GCD;
+/// the ticket also prevents that old closure from touching a rebuilt graph.
+final class TalkRouteRecovery: @unchecked Sendable {
+    private let queue: DispatchQueue
+    private var ticket: UUID?
+    private var work: DispatchWorkItem?
+    init(queue: DispatchQueue) { self.queue = queue }
+    func request(_ rebuild: @escaping @Sendable () -> Void) {
+        cancel()
+        let id = UUID()
+        ticket = id
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.ticket == id else { return }
+            self.ticket = nil
+            self.work = nil
+            rebuild()
+        }
+        self.work = work
+        queue.asyncAfter(deadline: .now() + .milliseconds(300), execute: work)
+    }
+    func cancel() { ticket = nil; work?.cancel(); work = nil }
 }

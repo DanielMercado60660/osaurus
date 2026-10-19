@@ -530,7 +530,9 @@ agent, falling back to the active agent and creating/focusing its chat window.
 Press it again to stop. Closing/switching the owned chat also stops talk mode.
 
 Talk mode continuously captures speech, waits for 700 ms silence and a final
-transcript, and sends through the normal ChatSession lifecycle. Speech shorter
+transcript, and sends through the normal ChatSession lifecycle. Final ASR starts
+speculatively after about 275 ms of silence; renewed speech invalidates that
+speculation, otherwise the result is reused at the configured endpoint. Speech shorter
 than 300 ms and empty or filler-only “uh”/“um” turns are ignored. The first complete
 assistant sentence is released to TTS immediately; after 500 ms without a sentence,
 a clause of at least 40 characters ending in a comma/semicolon may be released.
@@ -547,9 +549,12 @@ speaking; **Show Captions** controls the partial user transcript.
 AVAudioEngine: microphone capture and TTS render through the same graph. If setup
 fails or the option is off, the fallback raises VAD probability from 0.5 to 0.75
 during playback and ignores speech for 300 ms after playback ends. Headphones can
-help with difficult acoustic environments. Audio route changes stop talk mode with
-an error; restart it after selecting the desired device. System-audio input is not
-supported for talk mode. Dictation, wake-word, speaker-button, and tool speech keep
+help with difficult acoustic environments. A non-default microphone uses separate
+capture and output engines with AEC disabled, keeping the default speaker; a
+one-line notice explains the fallback. Route notifications coalesce for 300 ms
+before rebuilding the graph and rescheduling pending audio. Only a failed rebuild
+stops capture; a running graph with an unchanged input format is left alone.
+System-audio input is not supported for talk mode. Dictation, wake-word, speaker-button, and tool speech keep
 their existing engines when talk mode is off. Wake-word listening resumes if it
 was running before talk mode. Continuous Chat Voice is stopped, not auto-resumed.
 
@@ -558,8 +563,10 @@ Cancellation** stops capture and takes effect on the next start. Disabling the
 active agent stops talk mode. Other talk options apply immediately.
 
 Telemetry uses `ai.osaurus` / `talk.mode`: end-of-speech to first raw visible token,
-end-of-speech to first completed playback buffer, and confirmed barge-in to player
-stop. `TalkModeController.shared.latency` retains the last 50 turns and exposes
+end-of-speech to first completed playback buffer, and (for the headless null sink)
+confirmed barge-in to synchronous stop. Hardware player stops are asynchronous;
+`bargeInToStopMs` remains unmeasured there. Speech end uses the capture timestamp
+of the last VAD-positive frame, not the first subsequent silent chunk. `TalkModeController.shared.latency` retains the last 50 turns and exposes
 p50/p90 for `firstTokenMs`, `firstAudioMs`, and `bargeInToStopMs`; `turns` is Codable
 for metrics exporters. Missing samples remain nil (never converted to zero).
 These are software timings, not acoustic latency proof. The <1.2 s p50 first-audio
@@ -573,5 +580,10 @@ Save them to a file and run `python3 fork/metrics/talk_latency.py turns.json` fo
 p50/p90 with measured/missing denominators. This exporter applies the same
 nearest-rank percentile rule as the app and does not grade acoustic targets.
 
-A single capture turn exceeding two minutes stops with an explicit error; restart
-talk mode for another turn. This bounds the retained, unsubmitted utterance.
+A capture segment reaching two minutes finalizes and capture continues into a new
+segment. Text from segments that finish ASR late is retained in order if the user
+resumes speaking before submission. TTS, chat-turn, and ASR errors show a
+toast and leave talk mode available for the next turn. External playback cancellation
+ends the reply without ending capture. Speaker buttons, tab-switch stops, and the
+`speak` tool do not replace active talk playback. A toggle received during teardown
+queues a restart once teardown finishes.

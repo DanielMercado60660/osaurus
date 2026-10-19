@@ -345,7 +345,7 @@ public final class TTSService: ObservableObject {
 
     private func makeStream(id: String, releasePolicy: TTSStreamReleasePolicy,
                             duplex: TalkAudioEngine?, voiceOverride: String? = nil) -> TTSStreamHandle {
-        stop()
+        stopPlaybackIncludingStream()
         let config = TTSConfigurationStore.load()
         let manager = manager
         let token = UUID()
@@ -446,6 +446,7 @@ public final class TTSService: ObservableObject {
     /// message stops playback; tapping a different message switches to it.
     /// If the model isn't downloaded yet, posts `.openTTSSettingsRequested`.
     public func toggleSpeak(text: String, messageId: UUID, voiceOverride: String? = nil) {
+        guard !TalkModeController.shared.isActive else { return }
         if playingMessageId == messageId {
             stop()
             return
@@ -472,6 +473,8 @@ public final class TTSService: ObservableObject {
     /// Fire-and-forget playback for the `speak` tool. Sets
     /// `activeSpeakCallId` so the row spinner runs until audio drains
     public func startToolPlayback(text: String, messageId: UUID, callId: String, voiceOverride: String? = nil) throws {
+        // The assistant reply is already spoken by the owned talk stream.
+        guard !TalkModeController.shared.isActive else { return }
         guard isModelReady else {
             if Self.pocketTtsModelsExistOnDisk() {
                 ensureModelLoaded()
@@ -491,6 +494,12 @@ public final class TTSService: ObservableObject {
 
     /// Stop any in-flight synthesis and clear playback state.
     public func stop() {
+        // Speaker controls and tab changes do not own the talk player's lifetime.
+        guard !TalkModeController.shared.isActive else { return }
+        stopPlaybackIncludingStream()
+    }
+
+    private func stopPlaybackIncludingStream() {
         activeStream?.cancel()
         outputLevel = 0
         playbackTask?.cancel()

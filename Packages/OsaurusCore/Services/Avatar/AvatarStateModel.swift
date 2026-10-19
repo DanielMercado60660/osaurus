@@ -59,10 +59,13 @@ final class AvatarStateModel: ObservableObject {
         let vad = VADService.shared
         let speech = SpeechService.shared
         let voiceError: Bool = if case .error = vad.state { true } else { false }
+        let ownsAudio = TalkAudioPolicy.speakingBelongsToSurface(
+            talkActive: TalkModeController.shared.isActive,
+            owner: TalkModeController.shared.agentID, surface: selectedAgent.id)
         update(
             AvatarInputs(
-                isSpeaking: audio.isSpeaking,
-                speakingLevel: audio.outputLevel,
+                isSpeaking: ownsAudio && audio.isSpeaking,
+                speakingLevel: ownsAudio ? audio.outputLevel : 0,
                 isListening: vad.state == .listening || speech.isSpeechDetected
                     || (TalkModeController.shared.agentID == selectedAgent.id
                         && TalkModeController.shared.state == .listening),

@@ -32,6 +32,7 @@ public final class TalkModeController: ObservableObject {
     private var startup: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
     private var shouldResumeVAD = false
+    private var restartRequest = TalkRestartRequest()
     private var benchmarkTask: Task<Void, Never>?
     private var benchmarkFinished = false
     private var benchmarkInterruptedRendering = false
@@ -58,6 +59,10 @@ public final class TalkModeController: ObservableObject {
     func owns(_ session: ChatSession) -> Bool { isActive && self.session === session }
 
     func toggle(agentID requestedAgentID: UUID? = nil, windowID requestedWindowID: UUID? = nil) {
+        if isStopping {
+            restartRequest.queue(agentID: requestedAgentID ?? agentID, windowID: requestedWindowID ?? windowID)
+            return
+        }
         if isActive { stop(); return }
         let manager = ChatWindowManager.shared
         let focused = (requestedWindowID ?? manager.lastFocusedWindowId).flatMap { manager.windowState(id: $0) }
@@ -96,6 +101,7 @@ public final class TalkModeController: ObservableObject {
         agentID = id
         windowID = target
         lastError = nil
+        TTSService.shared.stop()
         isStarting = true
         NotificationCenter.default.post(name: .talkModeWillStart, object: nil)
         shouldResumeVAD = VADService.shared.state == .listening || VADService.shared.state == .starting
@@ -117,6 +123,9 @@ public final class TalkModeController: ObservableObject {
                 self.isStarting = false
                 self.dispatch(.start(aec: aec))
                 self.logger.info("capture started aec=\(aec)")
+                if !aec && self.configuration.echoCancellationEnabled && !duplex.usesFileInput {
+                    ToastManager.shared.info("Talk mode", message: "Echo cancellation is unavailable for this audio route; using the selected microphone and default speaker.")
+                }
                 self.startTicker()
                 if let config = try TalkBenchmarkConfiguration.parse(ProcessInfo.processInfo.environment) {
                     self.benchmarkTask = Task { await self.runBenchmark(config, duplex: duplex) }
@@ -151,10 +160,13 @@ public final class TalkModeController: ObservableObject {
             self.agentID = nil
             self.windowID = nil
             self.aecActive = false
-            self.isStopping = false
             if self.shouldResumeVAD {
                 self.shouldResumeVAD = false
                 await VADService.shared.resumeAfterChat()
+            }
+            self.isStopping = false
+            if let request = self.restartRequest.take() {
+                self.toggle(agentID: request.agentID, windowID: request.windowID)
             }
         }
     }
@@ -173,7 +185,8 @@ public final class TalkModeController: ObservableObject {
                 self.dispatch(.tick(ProcessInfo.processInfo.systemUptime))
                 // A rejected send or a cancelled warm-up may never enter isStreaming.
                 if self.replyEpoch != nil, self.session?.isAvailableForDispatchReattachment == true, self.stream != nil {
-                    self.stream?.finish()
+                    if let message = self.session?.lastStreamError { self.recoverTurn(message) }
+                    else { self.stream?.finish() }
                 }
             }
         }
@@ -186,6 +199,17 @@ public final class TalkModeController: ObservableObject {
         case .partial(let segment, let text): dispatch(.partial(segment: segment, text: text))
         case .final(let segment, let text): dispatch(.final(segment: segment, text: text))
         case .failed(let message): fail(message)
+        case .recognitionFailed(let segment, let message):
+            lastError = message
+            ToastManager.shared.error("Could not transcribe this turn", message: message)
+            dispatch(.recognitionFailed(segment: segment))
+        case .aecChanged(let active):
+            let wasActive = aecActive
+            aecActive = active
+            dispatch(.aecChanged(active))
+            if wasActive && !active {
+                ToastManager.shared.info("Talk mode", message: "Echo cancellation is unavailable on the new route; talk mode is still listening.")
+            }
         }
     }
 
@@ -215,7 +239,8 @@ public final class TalkModeController: ObservableObject {
         stream?.cancel()
         stream = nil
         let stopped = ProcessInfo.processInfo.systemUptime
-        if let epoch, snapshot.state == .userSpeaking || snapshot.state == .endOfTurn {
+        if let epoch, duplex?.usesFileInput == true,
+           snapshot.state == .userSpeaking || snapshot.state == .endOfTurn {
             let ms = (stopped - start) * 1000
             latency.update(epoch: epoch) { $0.bargeInToStopMs = ms }
             logger.info("epoch=\(epoch) barge_in_to_player_stop_ms=\(ms)")
@@ -226,7 +251,7 @@ public final class TalkModeController: ObservableObject {
 
     private func send(_ text: String, epoch: UInt64, speechEnd: TimeInterval) {
         guard let session, let duplex else { return }
-        guard session.isAvailableForDispatchReattachment else { fail("The chat is busy. Restart talk mode when the current turn settles."); return }
+        guard session.isAvailableForDispatchReattachment else { recoverTurn("The previous chat turn is still settling. Please try again."); return }
         replyEpoch = epoch
         latency.begin(epoch: epoch, speechEnd: speechEnd)
         let handle = TTSService.shared.beginTalkStream(id: "talk-\(epoch)", duplex: duplex,
@@ -245,8 +270,8 @@ public final class TalkModeController: ObservableObject {
                 self.replyEpoch = nil
                 self.chatSubscription = nil
                 self.dispatch(.replyFinished(epoch: epoch, at: now))
-            case .cancelled: self.fail("Talk playback was interrupted by another audio request.")
-            case .failed(_, let message): self.fail(message)
+            case .cancelled: self.recoverTurn(nil)
+            case .failed(_, let message): self.recoverTurn(message)
             }
         }
         chatSubscription = session.rawAssistantDeltas.sink { [weak self, weak handle] event in
@@ -260,14 +285,14 @@ public final class TalkModeController: ObservableObject {
                 }
                 handle?.enqueue(text: text)
             case .finished:
-                if let message = session.lastStreamError { self.fail(message) }
+                if let message = session.lastStreamError { self.recoverTurn(message) }
                 else { handle?.finish() }
             case .cancelled:
-                self.stop()
+                self.recoverTurn(nil)
             }
         }
         session.send(text, directUserSend: true)
-        if session.isAvailableForDispatchReattachment { fail(session.lastStreamError ?? "The chat did not accept the voice turn.") }
+        if session.isAvailableForDispatchReattachment { recoverTurn(session.lastStreamError ?? "The chat did not accept the voice turn.") }
     }
 
     private func initializeBenchmark() {
@@ -323,7 +348,7 @@ public final class TalkModeController: ObservableObject {
                     }
                 }
             }
-            finishBenchmark(error: nil, bargeInAttempted: bargeInAttempted)
+            finishBenchmark(error: lastError, bargeInAttempted: bargeInAttempted)
         } catch { finishBenchmark(error: lastError ?? error.localizedDescription, bargeInAttempted: bargeInAttempted) }
     }
 
@@ -353,6 +378,14 @@ public final class TalkModeController: ObservableObject {
             while isStopping { try? await Task.sleep(for: .milliseconds(20)) }
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    private func recoverTurn(_ message: String?) {
+        if let message {
+            lastError = message
+            ToastManager.shared.error("Talk reply interrupted", message: message)
+        }
+        dispatch(.turnFailed(epoch: snapshot.epoch))
     }
 
     private func fail(_ message: String) {
