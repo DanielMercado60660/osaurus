@@ -1581,6 +1581,10 @@ private actor TranscriptionWorker {
     private let needsConversion: Bool
     private var converter: AVAudioConverter?
 
+    private var smartTurnTask: Task<Void, Never>?
+    private var smartTurnPolicy = TalkSmartTurnPolicy()
+    private var smartTurnSegment = 0
+    private var smartTurnUnavailable = false
     private let talkGate: TalkSpeechGate?
     private var recognitionTask: Task<Void, Never>?
     private var recognitionID = UUID()
@@ -1634,6 +1638,8 @@ private actor TranscriptionWorker {
     }
 
     func stop() {
+        smartTurnTask?.cancel(); smartTurnTask = nil
+        smartTurnPolicy.resumeSpeech()
         for recognition in recognitionTasks.values { recognition.cancel() }
         recognitionTasks.removeAll()
         recognitionLedger = TalkRecognitionLedger()
@@ -1749,6 +1755,7 @@ private actor TranscriptionWorker {
     /// Capture/VAD never await ASR in talk mode. Segment-tagged recognition is
     /// serialized separately, so a slow preview cannot block barge-in detection.
     private func runTalkLoop(gate: TalkSpeechGate) async {
+        defer { smartTurnTask?.cancel(); smartTurnTask = nil }
         var vadState = await vadManager.makeStreamState()
         var recent: [Float] = []
         var utterance: [Float] = []
@@ -1758,10 +1765,13 @@ private actor TranscriptionWorker {
         var lastSpeech = ProcessInfo.processInfo.systemUptime
         var lastPreview = lastSpeech
         var endpoint = TalkFinalizationPolicy()
+        var speechDuration = 0.0
         while audioBuffer.isActive && !Task.isCancelled {
             do { try await Task.sleep(for: .milliseconds(50)) } catch { break }
             if failedRecognitionSegments.remove(segment) != nil && inSegment {
                 cancelTalkSpeculation()
+                smartTurnTask?.cancel(); smartTurnTask = nil
+                smartTurnPolicy.resumeSpeech()
                 utterance = []
                 recent = []
                 inSegment = false
@@ -1785,10 +1795,17 @@ private actor TranscriptionWorker {
                 if detected {
                     if !inSegment {
                         segment += 1
+                        smartTurnSegment = segment
+                        smartTurnPolicy = TalkSmartTurnPolicy()
+                        speechDuration = 0
+                        endpoint = TalkFinalizationPolicy()
                         inSegment = true
                         utterance = recent
                         lastPreview = now
                     }
+                    speechDuration += Double(fresh.count) / 16_000
+                    smartTurnTask?.cancel(); smartTurnTask = nil
+                    smartTurnPolicy.resumeSpeech()
                     // Capture timestamp of the last voiced frame, not ASR/VAD
                     // completion or the first subsequent sub-threshold chunk.
                     lastSpeech = captured.end
@@ -1800,14 +1817,42 @@ private actor TranscriptionWorker {
                     continuation?.yield(.talk(.activity(segment: segment, active: detected, at: time)))
                 }
                 guard inSegment else { continue }
-                switch endpoint.update(active: active, silence: captured.end - lastSpeech,
-                                       endSilence: gate.silenceSeconds, sampleCount: utterance.count) {
+                let silence = captured.end - lastSpeech
+                let smartActive = gate.smartTurnDirectory != nil && !smartTurnUnavailable
+                let endSilence = smartActive ? gate.silenceSeconds : gate.fallbackSilenceSeconds
+                if !active, smartActive, silence < endSilence,
+                   let id = smartTurnPolicy.request(silence: silence, speechDuration: speechDuration,
+                                                    checkSilence: gate.smartTurnCheckSeconds),
+                   let directory = gate.smartTurnDirectory {
+                    let samples = Array(utterance.suffix(SmartTurnFeatures.sampleCount))
+                    let capturedSegment = segment
+                    smartTurnTask = Task { [weak self] in
+                        do {
+                            let result = try await SmartTurnService.shared.predict(samples: samples, directory: directory)
+                            guard !Task.isCancelled else { return }
+                            await self?.finishSmartTurn(segment: capturedSegment, id: id, prediction: result, error: nil)
+                        } catch {
+                            guard !Task.isCancelled else { return }
+                            await self?.finishSmartTurn(segment: capturedSegment, id: id, prediction: nil,
+                                                       error: error.localizedDescription)
+                        }
+                    }
+                }
+                let semanticComplete = !active && smartActive && smartTurnPolicy.complete
+                switch endpoint.update(active: active, silence: silence,
+                                       endSilence: endSilence, sampleCount: utterance.count,
+                                       semanticComplete: semanticComplete,
+                                       speculationSilence: smartActive ? min(0.275, gate.smartTurnCheckSeconds) : 0.275) {
                 case .cancelSpeculation:
                     cancelTalkSpeculation()
                 case .speculate:
                     recognizeTalk(utterance, segment: segment, kind: .speculative)
                 case .finalize(let reuse):
-                    continuation?.yield(.talk(.endOfTurnDecided(segment: segment, at: now)))
+                    let observation = TalkEndpointObservation(checks: smartTurnPolicy.checks,
+                        probability: smartTurnPolicy.probability, reason: semanticComplete ? .smartTurn : .silence)
+                    smartTurnTask?.cancel(); smartTurnTask = nil
+                    smartTurnPolicy.resumeSpeech() // invalidate any callback still draining
+                    continuation?.yield(.talk(.endOfTurnDecided(segment: segment, at: now, observation: observation)))
                     if active {
                         active = false
                         continuation?.yield(.speechActivity(false))
@@ -1834,6 +1879,18 @@ private actor TranscriptionWorker {
             }
         }
         continuation?.finish()
+    }
+
+    private func finishSmartTurn(segment: Int, id: Int, prediction: SmartTurnPrediction?, error: String?) {
+        guard smartTurnSegment == segment, smartTurnPolicy.pending == id else { return }
+        smartTurnTask = nil
+        if let prediction {
+            smartTurnPolicy.receive(id: id, probability: prediction.probability, threshold: prediction.threshold)
+        } else {
+            smartTurnUnavailable = true
+            smartTurnPolicy.resumeSpeech()
+            continuation?.yield(.talk(.smartTurnUnavailable(error ?? "No prediction")))
+        }
     }
 
     private func cancelTalkSpeculation() {

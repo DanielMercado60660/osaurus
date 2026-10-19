@@ -12,7 +12,7 @@ def complete_row():
     return {"endOfTurnDecidedMs": 7, "asrFinalMs": 5, "sendIssuedMs": 8,
             "firstStreamDeltaMs": 9, "firstVisibleTokenMs": 10, "firstTokenMs": 10,
             "firstSentenceReleasedMs": 11, "firstAudioMs": 20,
-            "reasoningDurationMs": 0, "reasoningDeltaCount": 0}
+            "reasoningDurationMs": 0, "reasoningDeltaCount": 0, "smartTurnChecks": 0, "endOfTurnReason": "silence"}
 
 
 class TalkBenchTests(unittest.TestCase):
@@ -129,15 +129,35 @@ class TalkBenchTests(unittest.TestCase):
 
     def test_stage_percentiles_missing_invalid_and_retention(self):
         from talk_latency import summarize, METRIC_FIELDS
-        rows = [{field: n for field in METRIC_FIELDS} for n in range(1, 61)]
+        rows = [{field: (n / 100 if field == "smartTurnProbability" else n) for field in METRIC_FIELDS} for n in range(1, 61)]
         summary = summarize(rows)
         for field in METRIC_FIELDS:
-            self.assertEqual(summary[field], {"samples": 50, "missing": 0, "p50": 35, "p90": 55})
+            self.assertEqual(summary[field], {"samples": 50, "missing": 0, "p50": 0.35 if field == "smartTurnProbability" else 35, "p90": 0.55 if field == "smartTurnProbability" else 55})
         invalid = summarize([{field: value for field in METRIC_FIELDS}
                              for value in [None, True, -1, float("nan"), float("inf")]])
         for field in METRIC_FIELDS:
             self.assertEqual(invalid[field], {"samples": 0, "missing": 5, "p50": None, "p90": None})
         self.assertEqual(summarize([])["firstReasoningMs"]["samples"], 0)
+
+    def test_smart_turn_completion_requires_endpoint_telemetry(self):
+        row = dict(complete_row(), endOfTurnReason="smartTurn", smartTurnChecks=1, smartTurnProbability=0.9)
+        self.assertEqual(self.scenario([row], {"error": None})["status"], "COMPLETE")
+        for field in ("endOfTurnReason", "smartTurnChecks", "smartTurnProbability"):
+            missing = dict(row)
+            del missing[field]
+            self.assertEqual(self.scenario([missing], {"error": None})["status"], "PARTIAL")
+        self.assertEqual(self.scenario([dict(row, smartTurnChecks=0)], {"error": None})["status"], "PARTIAL")
+
+    def test_smart_turn_summary_keeps_failures_missing_and_silence_rows(self):
+        from talk_latency import summarize
+        rows = [{"smartTurnChecks": 1, "smartTurnProbability": 0.8, "endOfTurnReason": "smartTurn"},
+                {"smartTurnChecks": 4, "smartTurnProbability": 0.4, "endOfTurnReason": "silence"},
+                {"smartTurnChecks": 0, "endOfTurnReason": "silence"}, {},
+                {"smartTurnChecks": 1.5, "smartTurnProbability": 1.1, "endOfTurnReason": "invalid"}]
+        stats = summarize(rows)
+        self.assertEqual(stats["smartTurnChecks"], {"samples": 3, "missing": 2, "p50": 1, "p90": 4})
+        self.assertEqual(stats["smartTurnProbability"], {"samples": 2, "missing": 3, "p50": 0.4, "p90": 0.8})
+        self.assertEqual(stats["endOfTurnReason"], {"smartTurn": 1, "silence": 2, "missing": 2})
 
     def test_asr_order_is_not_assumed_and_legacy_data_stays_missing(self):
         from talk_latency import summarize

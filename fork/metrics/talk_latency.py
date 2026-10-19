@@ -12,15 +12,16 @@ import sys
 
 STAGE_FIELDS = ("endOfTurnDecidedMs", "asrFinalMs", "sendIssuedMs", "firstStreamDeltaMs",
                 "firstReasoningMs", "firstVisibleTokenMs", "firstSentenceReleasedMs", "firstAudioMs")
-REQUIRED_FIELDS = tuple(f for f in STAGE_FIELDS if f != "firstReasoningMs") + ("reasoningDurationMs", "reasoningDeltaCount")
-METRIC_FIELDS = STAGE_FIELDS + ("reasoningDurationMs", "reasoningDeltaCount", "firstTokenMs", "bargeInToStopMs")
+REQUIRED_FIELDS = tuple(f for f in STAGE_FIELDS if f != "firstReasoningMs") + ("reasoningDurationMs", "reasoningDeltaCount", "smartTurnChecks")
+METRIC_FIELDS = STAGE_FIELDS + ("reasoningDurationMs", "reasoningDeltaCount", "firstTokenMs", "bargeInToStopMs", "smartTurnChecks", "smartTurnProbability")
 
 
 def measured(row, field):
     value = row.get(field)
     return (isinstance(value, (int, float)) and not isinstance(value, bool)
             and math.isfinite(value) and value >= 0
-            and (field != "reasoningDeltaCount" or int(value) == value))
+            and (field not in ("reasoningDeltaCount", "smartTurnChecks") or int(value) == value)
+            and (field != "smartTurnProbability" or value <= 1))
 
 
 def ordering_errors(row):
@@ -40,6 +41,9 @@ def summarize(turns):
         result[field] = {"samples": len(values), "missing": len(rows) - len(values),
                          "p50": values[math.ceil(len(values) * .5) - 1] if values else None,
                          "p90": values[math.ceil(len(values) * .9) - 1] if values else None}
+    reasons = [row.get("endOfTurnReason") for row in rows]
+    result["endOfTurnReason"] = {"smartTurn": reasons.count("smartTurn"), "silence": reasons.count("silence"),
+                                 "missing": sum(r not in ("smartTurn", "silence") for r in reasons)}
     result["ordering_errors"] = [{"row": i, "errors": errors} for i, row in enumerate(rows)
                                   if (errors := ordering_errors(row))]
     eligible = [row for row in rows if measured(row, "asrFinalMs") and measured(row, "endOfTurnDecidedMs")]

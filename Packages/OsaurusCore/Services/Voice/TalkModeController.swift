@@ -55,8 +55,7 @@ public final class TalkModeController: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 let next = TalkModeConfigurationStore.load()
-                let requiresRestart = next.endOfTurnSilenceMs != self.configuration.endOfTurnSilenceMs
-                    || next.echoCancellationEnabled != self.configuration.echoCancellationEnabled
+                let requiresRestart = next.requiresCaptureRestart(comparedTo: self.configuration)
                 self.configuration = next
                 if self.isActive && (requiresRestart || self.agentID.map { !next.enabledAgentIds.contains($0) } == true) {
                     self.stop()
@@ -150,7 +149,11 @@ public final class TalkModeController: ObservableObject {
         NotificationCenter.default.post(name: .talkModeWillStart, object: nil)
         shouldResumeVAD = shouldResumeVAD || VADService.shared.state == .listening || VADService.shared.state == .starting
         let duplex = TalkAudioEngine()
-        let gate = TalkSpeechGate(silenceMs: configuration.endOfTurnSilenceMs)
+        let smartTurnDirectory = configuration.smartTurnEnabled ? SmartTurnResources.availableDirectory() : nil
+        let gate = TalkSpeechGate(silenceMs: configuration.effectiveEndSilenceMs(smartTurnActive: smartTurnDirectory != nil),
+                                  smartTurnDirectory: smartTurnDirectory,
+                                  smartTurnCheckMs: configuration.smartTurnCheckSilenceMs,
+                                  fallbackSilenceMs: configuration.effectiveEndSilenceMs(smartTurnActive: false))
         self.duplex = duplex
         self.gate = gate
         startup = Task { [weak self] in
@@ -256,13 +259,17 @@ public final class TalkModeController: ObservableObject {
         case .activity(let segment, let active, let time):
             dispatch(active ? .speechStarted(segment: segment, at: time) : .speechEnded(segment: segment, at: time))
         case .partial(let segment, let text): dispatch(.partial(segment: segment, text: text))
-        case .endOfTurnDecided(let segment, let at):
+        case .endOfTurnDecided(let segment, let at, let observation):
             guard snapshot.segments.contains(segment) else { return }
             captureTiming.endpoints[segment] = at
+            captureTiming.observations[segment] = observation
+            dispatch(.endpoint(segment: segment))
         case .final(let segment, let text, let at):
             guard snapshot.segments.contains(segment) else { return }
             captureTiming.finals[segment] = at
             dispatch(.final(segment: segment, text: text))
+        case .smartTurnUnavailable(let message):
+            ToastManager.shared.info("Smart end of turn unavailable", message: "Using silence detection. " + message)
         case .failed(let message): fail(message)
         case .recognitionFailed(let segment, let message):
             publishAvatar(.reaction(.oops))

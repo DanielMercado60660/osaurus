@@ -8,7 +8,7 @@ import Foundation
 /// host sample already includes their physical pages.
 final class AuxiliaryModelResidency: @unchecked Sendable {
     static let shared = AuxiliaryModelResidency()
-    enum Kind: String, Codable, Sendable { case stt, tts, vad, privacy }
+    enum Kind: String, Codable, Sendable { case stt, tts, vad, privacy, smartTurn }
     struct Entry: Sendable {
         let kind: Kind
         let estimatedBytes: UInt64?

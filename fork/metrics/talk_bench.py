@@ -74,7 +74,7 @@ def prepare_root(root, model_id, model_dir):
     write_json(voice / "tts.json", {"provider": "pocketTTS", "voice": "alba", "temperature": 0.7})
     write_json(voice / "vad.json", {"vadModeEnabled": False})
     write_json(voice / "talk.json", {"enabledAgentIds": ["00000000-0000-0000-0000-000000000001"],
-                                   "bargeInEnabled": True, "endOfTurnSilenceMs": 700, "thinkBeforeSpeaking": False})
+                                   "bargeInEnabled": True, "smartTurnEnabled": True, "thinkBeforeSpeaking": False})
     # Avoid colliding with an ordinary running Osaurus server. No server calls
     # are used for chat: the real ChatSession owns the in-process turn.
     with socket.socket() as sock:
@@ -117,6 +117,9 @@ def run_scenario(binary, root, wavs, model_id, model_dir, barge_ms=None):
     complete = (error is None and process.returncode == 0 and status.get("error") is None
                 and len(turns) == len(wavs)
                 and all(stats[field]["missing"] == 0 for field in REQUIRED_FIELDS)
+                and stats["endOfTurnReason"]["missing"] == 0
+                and all(row.get("endOfTurnReason") != "smartTurn" or
+                        (row.get("smartTurnChecks", 0) > 0 and measured(row, "smartTurnProbability")) for row in turns)
                 and not stats["ordering_errors"]
                 and all(row.get("reasoningDeltaCount") == 0 or measured(row, "firstReasoningMs") for row in turns))
     if barge_ms is not None:

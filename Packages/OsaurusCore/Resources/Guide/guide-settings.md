@@ -349,14 +349,15 @@ If a helper exits, the status shows the error; toggle off/on to retry.
 ### Voice → Talk Mode
 
 - **Enabled for Agent** — opt individual agents into hands-free conversation.
-- **End of Turn Silence** — silence before sending a final transcript (700 ms by default).
+- **Smart end of turn** — on by default when the local Smart Turn v3 model is present. After at least 300 ms of speech, checks the last eight seconds of audio at 250 ms of silence and rechecks every 200 ms. A complete thought can send early, reusing speculative transcription. Missing or failed models use silence detection. Download Smart Turn v3 (32 MB) here; existing Hugging Face snapshots are reused in place and never deleted. Downloads use the app's existing transfer path into its auxiliary-model folder. No audio is sent to the download server.
+- **End of Turn Silence** — maximum silence before sending a final transcript: automatic default 900 ms with Smart Turn available, 700 ms otherwise. An explicitly saved value (including older saved values) takes precedence. Smart Turn may send sooner.
 - **Allow Barge-In** — sustained speech interrupts generation and playback (160 ms minimum).
 - **Echo Cancellation** — request Apple voice processing on the shared microphone/playback engine.
   If unavailable, playback uses a higher VAD threshold and a 300 ms echo cooldown.
 - **Think before speaking** — off by default. On spoken turns, Off explicitly disables thinking only when the active local model's bundle/template declares a thinking toggle. On leaves reasoning to the bundle default (it does not force reasoning on). Models without a toggle keep their native behavior; the caption reports “This model always reasons” or “This model doesn't reason”. Unknown/remote capabilities preserve the model default. Changes save automatically and apply to the next spoken turn. The chat composer's saved Thinking/effort choices are unchanged and do not override this talk-only preference.
 - **Show Captions** — display the user's partial transcript beside the chat talk button.
 
-Settings save automatically. Silence and echo changes stop active talk mode; start it again
+Settings save automatically. Silence, Smart end of turn, and echo changes stop active talk mode; start it again
 for the new capture settings. Toggle with the waveform circle beside the chat mic or
 **Control–Option–Command–T**. Talk mode pauses Wake Word and supersedes continuous Chat Voice.
 It requires a microphone input, downloaded speech model, and configured Text To Speech engine.

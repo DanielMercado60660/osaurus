@@ -13,6 +13,7 @@ struct TalkModeSnapshot: Equatable, Sendable {
     var speechStart: TimeInterval?
     var speechEnd: TimeInterval?
     var speechDuration: TimeInterval = 0
+    var endpointDecided = false
     var segments: [Int] = []
     var transcripts: [Int: String] = [:]
     var transcript: String? {
@@ -36,6 +37,7 @@ enum TalkModeEvent: Equatable {
     case speechEnded(segment: Int, at: TimeInterval)
     case partial(segment: Int, text: String)
     case final(segment: Int, text: String)
+    case endpoint(segment: Int)
     case tick(TimeInterval)
     case firstAudio(epoch: UInt64)
     case replyFinished(epoch: UInt64, at: TimeInterval)
@@ -103,6 +105,7 @@ enum TalkModeReducer {
                 s.segment = segment
                 s.speechStart = now
                 s.speechEnd = nil
+                s.endpointDecided = false
                 s.state = .userSpeaking
             }
         case .speechEnded(let segment, let now):
@@ -128,6 +131,8 @@ enum TalkModeReducer {
             guard s.segments.contains(segment), s.state == .userSpeaking || s.state == .endOfTurn else { break }
             s.transcripts[segment] = text.trimmingCharacters(in: .whitespacesAndNewlines)
             s.caption = s.segments.compactMap { s.transcripts[$0] }.joined(separator: " ")
+        case .endpoint(let segment):
+            if s.segment == segment, s.state == .endOfTurn { s.endpointDecided = true }
         case .tick(let now):
             if let start = s.candidateStart, s.candidateSegment != nil,
                now - start >= Double(config.bargeInMinSpeechMs) / 1000 {
@@ -135,7 +140,7 @@ enum TalkModeReducer {
                 effects.append(.cancelReply)
             }
             if s.state == .endOfTurn, let end = s.speechEnd,
-               now - end >= Double(config.endOfTurnSilenceMs) / 1000, let text = s.transcript {
+               (s.endpointDecided || now - end >= Double(config.endOfTurnSilenceMs) / 1000), let text = s.transcript {
                 if s.speechDuration >= 0.3 && hasMeaningfulText(text) {
                     s.state = .thinking
                     effects.append(.send(text: text, epoch: s.epoch, speechEnd: end))
@@ -173,6 +178,7 @@ enum TalkModeReducer {
         s.speechStart = s.candidateStart
         s.speechEnd = nil
         s.speechDuration = 0
+        s.endpointDecided = false
         s.segments = s.segment.map { [$0] } ?? []
         s.transcripts = [:]
         s.caption = ""
@@ -194,6 +200,9 @@ public struct TalkTurnLatency: Codable, Equatable, Sendable {
     public let epoch: UInt64
     public let speechEnd: TimeInterval
     public var endOfTurnDecidedMs: Double?
+    public var smartTurnChecks: Int?
+    public var smartTurnProbability: Float?
+    public var endOfTurnReason: String?
     public var asrFinalMs: Double?
     public var sendIssuedMs: Double?
     public var firstStreamDeltaMs: Double?
@@ -218,7 +227,7 @@ public struct TalkTurnLatency: Codable, Equatable, Sendable {
         case epoch, speechEnd, endOfTurnDecidedMs, asrFinalMs, sendIssuedMs
         case firstStreamDeltaMs, firstReasoningMs, firstVisibleTokenMs, firstTokenMs
         case firstSentenceReleasedMs, firstAudioMs, bargeInToStopMs
-        case reasoningDurationMs, reasoningDeltaCount
+        case reasoningDurationMs, reasoningDeltaCount, smartTurnChecks, smartTurnProbability, endOfTurnReason
     }
     mutating func observe(_ event: TalkStreamTimingEvent) {
         switch event {
@@ -258,11 +267,18 @@ enum TalkStreamTimingEvent {
 struct TalkCaptureTiming {
     var endpoints: [Int: TimeInterval] = [:]
     var finals: [Int: TimeInterval] = [:]
+    var observations: [Int: TalkEndpointObservation] = [:]
     mutating func retain(_ segments: [Int]) {
         endpoints = endpoints.filter { segments.contains($0.key) }
         finals = finals.filter { segments.contains($0.key) }
+        observations = observations.filter { segments.contains($0.key) }
     }
     func apply(segments: [Int], to turn: inout TalkTurnLatency) {
+        if !segments.isEmpty, segments.allSatisfy({ observations[$0] != nil }) {
+            turn.smartTurnChecks = segments.compactMap { observations[$0]?.checks }.reduce(0, +)
+            turn.smartTurnProbability = segments.compactMap { observations[$0]?.probability }.last
+            turn.endOfTurnReason = segments.last.flatMap { observations[$0]?.reason.rawValue }
+        }
         if !segments.isEmpty, segments.allSatisfy({ endpoints[$0] != nil }),
            let end = segments.compactMap({ endpoints[$0] }).max() {
             turn.endOfTurnDecidedMs = (end - turn.speechEnd) * 1000
@@ -300,7 +316,16 @@ final class TalkSpeechGate: @unchecked Sendable {
     private var threshold: Float = 0.5
     private var ignoreUntil: TimeInterval = 0
     let silenceSeconds: Double
-    init(silenceMs: Int) { silenceSeconds = Double(silenceMs) / 1000 }
+    let smartTurnDirectory: URL?
+    let smartTurnCheckSeconds: Double
+    let fallbackSilenceSeconds: Double
+    init(silenceMs: Int, smartTurnDirectory: URL? = nil, smartTurnCheckMs: Int = 250,
+         fallbackSilenceMs: Int? = nil) {
+        silenceSeconds = Double(silenceMs) / 1000
+        self.smartTurnDirectory = smartTurnDirectory
+        smartTurnCheckSeconds = Double(smartTurnCheckMs) / 1000
+        fallbackSilenceSeconds = Double(fallbackSilenceMs ?? silenceMs) / 1000
+    }
     func update(aec: Bool, playback: Bool, ignoreUntil: TimeInterval) {
         lock.withLock {
             threshold = TalkModeReducer.vadThreshold(aecActive: aec, playback: playback)
@@ -313,13 +338,14 @@ final class TalkSpeechGate: @unchecked Sendable {
 }
 
 enum TalkCaptureEvent: Sendable {
-    case endOfTurnDecided(segment: Int, at: TimeInterval)
+    case endOfTurnDecided(segment: Int, at: TimeInterval, observation: TalkEndpointObservation = .init())
     case activity(segment: Int, active: Bool, at: TimeInterval)
     case partial(segment: Int, text: String)
     case final(segment: Int, text: String, at: TimeInterval?)
     case failed(String)
     case recognitionFailed(segment: Int, message: String)
     case aecChanged(Bool)
+    case smartTurnUnavailable(String)
 }
 
 
@@ -339,7 +365,7 @@ enum TalkAudioPolicy {
 struct TalkFinalizationPolicy {
     private(set) var speculative = false
     enum Action: Equatable { case none, speculate, cancelSpeculation, finalize(reuse: Bool) }
-    mutating func update(active: Bool, silence: Double, endSilence: Double, sampleCount: Int) -> Action {
+    mutating func update(active: Bool, silence: Double, endSilence: Double, sampleCount: Int, semanticComplete: Bool = false, speculationSilence: Double = 0.275) -> Action {
         if sampleCount >= 16_000 * 120 {
             let reuse = speculative && !active
             speculative = false
@@ -349,12 +375,12 @@ struct TalkFinalizationPolicy {
             if speculative { speculative = false; return .cancelSpeculation }
             return .none
         }
-        if silence >= endSilence {
+        if semanticComplete || silence >= endSilence {
             let reuse = speculative
             speculative = false
             return .finalize(reuse: reuse)
         }
-        if silence >= 0.275 && !speculative { speculative = true; return .speculate }
+        if silence >= speculationSilence && !speculative { speculative = true; return .speculate }
         return .none
     }
 }
