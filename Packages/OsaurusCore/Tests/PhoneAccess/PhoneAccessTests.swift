@@ -72,6 +72,75 @@ struct PhoneAccessTests {
         #expect(service.state.phase == .stopped)
     }
 
+    @Test func deviceStatusParsing() throws {
+        let event = try #require(PhoneAccessStatus.parse(
+            #"{"type":"device","device":{"stableID":"n123","name":"Phone","login":"owner@example.com","allowed":false}}"#
+        ))
+        #expect(event.device?.stableID == "n123")
+        #expect(event.device?.allowed == false)
+        #expect(PhoneAccessStatus.parse(
+            #"{"type":"device","device":{"stableID":"tagged","name":"Node","login":"","allowed":false}}"#
+        ) != nil)
+        for invalid in [
+            #"{"type":"device"}"#,
+            #"{"type":"device","device":{"stableID":"","name":"Phone","login":"owner","allowed":true}}"#,
+            #"{"type":"device","device":{"stableID":"a,b","name":"Phone","login":"owner","allowed":true}}"#,
+            #"{"type":"device","device":{"stableID":"a","name":"Phone","login":"owner"}}"#,
+        ] { #expect(PhoneAccessStatus.parse(invalid) == nil) }
+    }
+
+    @Test @MainActor func deviceRestrictionsAndDiscoveriesPersist() throws {
+        let name = "PhoneDevicesTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let service = TailscalePhoneAccessService(defaults: defaults)
+        #expect(!service.restrictDevices && service.allowedDeviceIDs.isEmpty && service.devices.isEmpty)
+        let denied = PhoneAccessDevice(stableID: "n123", name: "Phone", login: "owner", allowed: false)
+        service.recordDevice(denied)
+        service.recordDevice(denied)
+        #expect(service.devices.count == 1)
+        service.saveDeviceRestrictions(true, selectedIDs: ["n123"])
+        let updated = PhoneAccessDevice(stableID: "n123", name: "Renamed phone", login: "owner", allowed: true)
+        service.recordDevice(updated)
+        let relaunched = TailscalePhoneAccessService(defaults: defaults)
+        #expect(relaunched.restrictDevices && relaunched.allowedDeviceIDs == ["n123"])
+        #expect(relaunched.devices == [updated])
+        relaunched.saveDeviceRestrictions(true, selectedIDs: [])
+        let locked = TailscalePhoneAccessService(defaults: defaults)
+        #expect(locked.restrictDevices && locked.allowedDeviceIDs.isEmpty)
+        locked.saveDeviceRestrictions(false, selectedIDs: ["n123"])
+        #expect(!TailscalePhoneAccessService(defaults: defaults).restrictDevices)
+    }
+
+    @Test func developmentDigestFailsClosed() {
+        let digest = String(repeating: "a", count: 64)
+        #expect(PhoneAccessHelperIntegrity.acceptsDevelopmentDigest(digest, expected: digest))
+        #expect(!PhoneAccessHelperIntegrity.acceptsDevelopmentDigest(digest, expected: nil))
+        #expect(!PhoneAccessHelperIntegrity.acceptsDevelopmentDigest(digest, expected: String(repeating: "b", count: 64)))
+        #expect(!PhoneAccessHelperIntegrity.acceptsDevelopmentDigest("bad", expected: "bad"))
+        #expect(!PhoneAccessHelperIntegrity.acceptsDevelopmentDigest(String(repeating: "z", count: 64), expected: String(repeating: "z", count: 64)))
+    }
+
+    @Test func helperRejectsUnsafeFilesBeforeSignatureCheck() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let helper = directory.appendingPathComponent("helper")
+        try Data("test".utf8).write(to: helper)
+        for mode in [0o775, 0o757, 0o777, 0o644] {
+            try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: helper.path)
+            #expect(throws: PhoneAccessHelperIntegrity.IntegrityError.self) {
+                try PhoneAccessHelperIntegrity.validate(helper: helper)
+            }
+        }
+        let link = directory.appendingPathComponent("link")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: helper)
+        #expect(throws: PhoneAccessHelperIntegrity.IntegrityError.self) {
+            try PhoneAccessHelperIntegrity.validate(helper: link)
+        }
+    }
+
     @Test func bundledWebRoutes() throws {
         for route in [
             "/phone", "/phone/", "/phone/app.js", "/phone/style.css", "/phone/manifest.webmanifest", "/phone/icon.svg",

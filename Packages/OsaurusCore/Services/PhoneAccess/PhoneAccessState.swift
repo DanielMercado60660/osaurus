@@ -1,16 +1,32 @@
 import Foundation
 
+struct PhoneAccessDevice: Codable, Equatable, Sendable, Identifiable {
+    let stableID: String
+    let name: String
+    let login: String
+    let allowed: Bool
+    var id: String { stableID }
+}
+
 struct PhoneAccessStatus: Decodable, Equatable, Sendable {
     let type: String
     let value: String?
+    var device: PhoneAccessDevice? = nil
 
     static func parse(_ line: String) -> Self? {
         guard line.utf8.count <= 16_384,
             let data = line.data(using: .utf8),
             let status = try? JSONDecoder().decode(Self.self, from: data),
-            ["login_url", "running", "dns_name", "owner_login", "error"].contains(status.type),
-            let value = status.value, !value.isEmpty
+            ["login_url", "running", "dns_name", "owner_login", "error", "device"].contains(status.type)
         else { return nil }
+        if status.type == "device" {
+            guard let device = status.device, !device.stableID.isEmpty,
+                device.stableID.utf8.count <= 256, !device.stableID.contains(","),
+                !device.name.isEmpty
+            else { return nil }
+            return status
+        }
+        guard let value = status.value, !value.isEmpty else { return nil }
         if status.type == "login_url" || status.type == "running" {
             guard let url = URL(string: value), let host = url.host, !host.isEmpty,
                 url.user == nil, url.password == nil,

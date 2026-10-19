@@ -930,6 +930,21 @@ public enum SettingsSearchIndex {
             disambiguation: "Private tailnet access. Separate from Mobile pairing and the public relay."
         ),
         .init(
+            id: "server.phoneAccess.restrictDevices", tab: .server, section: "Phone access over Tailscale",
+            title: "Restrict access to selected devices", keywords: ["phone", "tailscale", "device allowlist", "restrict"], subTab: "Overview",
+            disambiguation: "Tailscale devices. Login allowlist still applies. Separate from Mobile pairing."
+        ),
+        .init(
+            id: "server.phoneAccess.devices", tab: .server, section: "Phone access over Tailscale",
+            title: "Connected devices", keywords: ["phone", "tailscale", "stable ID", "select device", "allowed denied"], subTab: "Overview",
+            disambiguation: "Tailscale devices. Login allowlist still applies. Separate from Mobile pairing."
+        ),
+        .init(
+            id: "server.phoneAccess.saveDevices", tab: .server, section: "Phone access over Tailscale",
+            title: "Save device restrictions", keywords: ["phone", "tailscale", "save devices", "allowlist"], subTab: "Overview",
+            disambiguation: "Tailscale devices. Login allowlist still applies. Separate from Mobile pairing."
+        ),
+        .init(
             id: "server.peerInference",
             tab: .server,
             title: "Share my models for inference",

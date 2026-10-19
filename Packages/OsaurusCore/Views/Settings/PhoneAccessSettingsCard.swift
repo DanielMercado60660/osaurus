@@ -6,6 +6,8 @@ struct PhoneAccessSettingsCard: View {
     @ObservedObject private var service = TailscalePhoneAccessService.shared
     @EnvironmentObject var server: ServerController
     @State private var logins = ""
+    @State private var restrictDevices = false
+    @State private var selectedIDs: Set<String> = []
 
     var body: some View {
         GroupBox("Phone access over Tailscale") {
@@ -41,16 +43,52 @@ struct PhoneAccessSettingsCard: View {
                 TextField("Allowed Tailscale logins", text: $logins)
                     .settingsLandingAnchor("server.phoneAccess.logins")
                 Text(
-                    "Comma-separated logins. Empty uses the login that owns this node. Allowed logins have owner access to this Mac's agents."
+                    "Comma-separated logins. Empty uses the login that owns this node. Every device signed in to an allowed login has owner access to this Mac's agents unless you restrict devices below. We recommend a tailnet ACL to limit which devices can reach this node."
                 ).font(.caption)
                 if let owner = service.state.ownerLogin { Text("Effective logins: \(owner)").font(.caption) }
                 Button("Save allowed logins") {
                     service.saveAllowedLogins(logins); logins = service.allowedLogins
                 }
                 .settingsLandingAnchor("server.phoneAccess.saveLogins")
+                Toggle("Restrict access to selected devices", isOn: $restrictDevices)
+                    .settingsLandingAnchor("server.phoneAccess.restrictDevices")
+                Text("Connected devices").font(.headline)
+                VStack(alignment: .leading, spacing: 8) {
+                    if service.devices.isEmpty {
+                        Text("Open the phone URL on a tailnet device to list it here, even if access is denied.")
+                            .font(.caption)
+                    }
+                    ForEach(service.devices) { device in
+                        Toggle(isOn: Binding(
+                            get: { selectedIDs.contains(device.stableID) },
+                            set: { selected in
+                                if selected { selectedIDs.insert(device.stableID) }
+                                else { selectedIDs.remove(device.stableID) }
+                            }
+                        )) {
+                            VStack(alignment: .leading) {
+                                Text(device.name)
+                                Text("\(device.login.isEmpty ? "Unknown login" : device.login) · \(device.stableID)").font(.caption).textSelection(.enabled)
+                                Text("Last request: \(device.allowed ? "allowed" : "denied")").font(.caption)
+                            }
+                        }
+                        .disabled(!restrictDevices)
+                    }
+                }
+                .settingsLandingAnchor("server.phoneAccess.devices")
+                Text("With restrictions on, selecting no devices denies all access. Device selection never bypasses the login allowlist. Changes apply when saved.")
+                    .font(.caption)
+                Button("Save device restrictions") {
+                    service.saveDeviceRestrictions(restrictDevices, selectedIDs: selectedIDs)
+                }
+                .settingsLandingAnchor("server.phoneAccess.saveDevices")
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onAppear { logins = service.allowedLogins }
+        .onAppear {
+            logins = service.allowedLogins
+            restrictDevices = service.restrictDevices
+            selectedIDs = service.allowedDeviceIDs
+        }
     }
 
     @ViewBuilder private func qr(_ url: URL) -> some View {

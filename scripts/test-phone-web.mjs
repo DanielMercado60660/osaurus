@@ -30,7 +30,7 @@ async function page(run, voice = false) {
   const context=vm.createContext({
     document:{getElementById:id=>elements.get(id),createElement:tag=>new Element(tag),createTextNode:text=>({textContent:text}),addEventListener(){}},
     window:{isSecureContext:true,MediaRecorder:voice?Recorder:undefined},MediaRecorder:Recorder,
-    navigator:voice?{mediaDevices:{getUserMedia:async()=>({getTracks:()=>tracks})}}:{},TextDecoder,AbortController,Blob,FormData,
+    navigator:voice?{mediaDevices:{getUserMedia:async()=>({getTracks:()=>tracks})}}:{},TextDecoder,AbortController,Blob,FormData,URL,
     fetch:async(url,options)=>{
       if(url==='/agents') return Response.json({agents:[{id:'agent-1',name:'My agent'}]});
       if(url==='/phone/capabilities') return Response.json({transcription:true,speech:false});
@@ -80,7 +80,8 @@ test('Markdown uses text nodes and safe links',async()=>{
   assert.equal(all.filter(n=>n.tag==='img'||n.tag==='script').length,0);
   assert.match(root.textContent,/<img src=x onerror/);
   assert.equal(all.find(n=>n.tag==='strong').textContent,'bold');
-  assert.deepEqual(all.filter(n=>n.tag==='a').map(n=>n.href),['https://example.test']);
+  assert.deepEqual(all.filter(n=>n.tag==='a').map(n=>n.href),['https://example.test/']);
+  assert.equal(all.find(n=>n.tag==='a').textContent,'safe (example.test)');
 });
 
 test('new chat clears history and agent picker is populated',async()=>{
@@ -100,4 +101,11 @@ test('hold-to-talk blocks chat until transcription finishes and leaves reviewabl
   assert.equal(p.$('prompt').value,'spoken words');
   assert.equal(p.$('send').disabled,false);
   assert.match(p.$('status').textContent,/Review the transcript/);
+});
+
+test('Markdown reveals actual destination host and renders malformed URLs as text',async()=>{
+  const p=await page(()=>sse('ok'));const root=new Element();
+  p.context.markdown(root,'[Apple ID login](https://apple.com@evil.example:8443/login) [broken](https://[bad)');
+  assert.match(root.textContent,/Apple ID login \(evil.example:8443\)/);
+  assert.match(root.textContent,/\[broken\]/);
 });

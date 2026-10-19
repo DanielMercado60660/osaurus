@@ -4222,6 +4222,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         isPreflight: Bool,
         isLoopback: Bool
     ) -> [(String, String)] {
+        // Phone pages are same-origin. Never give proxied tailnet traffic the
+        // loopback wildcard (or the server's configured cross-origin policy).
+        guard head.headers.first(name: PhoneAccessTrust.originHeader) == nil else { return [] }
         let origin = head.headers.first(name: "Origin")
         var headers: [(String, String)] = []
 

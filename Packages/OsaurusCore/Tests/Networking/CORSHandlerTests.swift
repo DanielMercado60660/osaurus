@@ -34,6 +34,37 @@ import Testing
 @Suite("CORS handler")
 struct CORSHandlerTests {
 
+    @Test func phoneMarkerSuppressesCORSRegardlessOfConfiguredOrigins() async throws {
+        for origins in [[], ["*"], ["https://phone.tail.ts.net"]] {
+            var config = ServerConfiguration.default
+            config.allowedOrigins = origins
+            let server = try await startCORSTestServer(config: config)
+            let secret = String(repeating: "p", count: 64)
+            PhoneAccessTrust.shared.replace(with: secret)
+            do {
+                for method in ["GET", "OPTIONS"] {
+                    var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/api/tags")!)
+                    request.httpMethod = method
+                    request.setValue("https://phone.tail.ts.net", forHTTPHeaderField: "Origin")
+                    request.setValue("1", forHTTPHeaderField: PhoneAccessTrust.originHeader)
+                    request.setValue(secret, forHTTPHeaderField: PhoneAccessTrust.secretHeader)
+                    request.setValue("GET", forHTTPHeaderField: "Access-Control-Request-Method")
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    let http = try #require(response as? HTTPURLResponse)
+                    #expect(http.statusCode == (method == "OPTIONS" ? 204 : 200))
+                    #expect(http.value(forHTTPHeaderField: "Access-Control-Allow-Origin") == nil)
+                    #expect(http.value(forHTTPHeaderField: "Access-Control-Allow-Methods") == nil)
+                }
+            } catch {
+                PhoneAccessTrust.shared.replace(with: nil)
+                await server.shutdown()
+                throw error
+            }
+            PhoneAccessTrust.shared.replace(with: nil)
+            await server.shutdown()
+        }
+    }
+
     // MARK: - Loopback auto-trust (production default)
 
     /// Reproduces the exact request shape from the Obsidian plugin: a simple

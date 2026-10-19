@@ -2,6 +2,7 @@
 # Deterministic fallback when the full MLX/app dependency graph cannot build.
 # Copies production sources unchanged; shims only unrelated app integration types.
 set -euo pipefail
+export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROOF="$ROOT/build/t04/isolated"
 mkdir -p "$PROOF/Sources/OsaurusCore/Resources" "$PROOF/Tests/OsaurusCoreTests" "$ROOT/build/t04/module-cache"
@@ -34,4 +35,4 @@ SWIFT
 CLANG_MODULE_CACHE_PATH="$ROOT/build/t04/module-cache" \
 SWIFTPM_MODULECACHE_OVERRIDE="$ROOT/build/t04/module-cache" \
 OSAURUS_TEST_ROOT="$ROOT/build/t04/test-root" \
-swift test --disable-sandbox --package-path "$PROOF"
+swift test --disable-keychain --disable-sandbox --package-path "$PROOF"

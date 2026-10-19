@@ -12,7 +12,15 @@ function inline(parent, text) {
     let node;
     if (match[0][0] === '`') { node = document.createElement('code'); node.textContent = match[0].slice(1,-1); }
     else if (match[0].startsWith('**')) { node = document.createElement('strong'); node.textContent = match[0].slice(2,-2); }
-    else { const link = /^\[([^\]]+)\]\((.+)\)$/.exec(match[0]); node = document.createElement('a'); node.textContent=link[1]; node.href=link[2]; node.target='_blank'; node.rel='noopener noreferrer'; }
+    else {
+      const link = /^\[([^\]]+)\]\((.+)\)$/.exec(match[0]);
+      try {
+        const destination = new URL(link[2]);
+        if (!['http:', 'https:'].includes(destination.protocol)) throw new Error('Unsupported link');
+        node = document.createElement('a'); node.textContent = `${link[1]} (${destination.host})`;
+        node.href = destination.href; node.target = '_blank'; node.rel = 'noopener noreferrer';
+      } catch { node = document.createTextNode(match[0]); }
+    }
     parent.append(node); offset = match.index + match[0].length;
   }
   parent.append(document.createTextNode(text.slice(offset)));

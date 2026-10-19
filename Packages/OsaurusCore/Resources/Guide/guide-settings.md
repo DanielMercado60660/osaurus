@@ -226,14 +226,34 @@ The companion breathes and blinks at rest, perks up while listening, and looks u
 **Phone access** is off by default. Enable it to start the local HTTP server and
 its bundled `osaurus-ts` helper. **Sign in to Tailscale** opens the helper's
 interactive login URL; authenticate once, then scan the phone URL QR code with a
-phone on your tailnet. The node (`osaurus-<Mac hostname>`) persists across restarts.
-This path does not use `agent.osaurus.ai`, port forwarding, or a public listener.
+phone on your tailnet. The node (`osaurus-<random 6 hex>`) persists across restarts.
+The random name is persisted in the phone-access state directory and avoids putting
+your Mac hostname in certificate transparency logs. This path does not use
+`agent.osaurus.ai` or automatic port mapping. HTTP listens only inside the tailnet;
+while enabled, tsnet also opens a host UDP WireGuard socket.
 
 **Allowed Tailscale logins** is a comma-separated list of tailnet login names.
-Empty means the login that authenticated the node. These users receive owner
-access, including the built-in agent. **Save allowed logins** applies immediately
+Empty means the login that authenticated the node. **Every device signed in to
+an allowed login receives owner access**, including the built-in agent, unless
+you restrict devices. We recommend a tailnet ACL to limit devices that can reach
+this node. **Save allowed logins** applies immediately
 by restarting the helper and rotating its launch secret. Disable **Phone access**
 to stop the helper; the tailnet node state is retained for next time.
+
+**Connected devices** lists the name, StableID, login and last allowed/denied
+request for devices that have opened the phone URL. Names are display-only;
+selection uses the authenticated Tailscale StableID. Enable **Restrict access to
+selected devices**, select the devices, then press **Save device restrictions**.
+An empty selection with restrictions enabled denies all devices. Devices must
+also belong to an allowed login. Saving restarts the helper, closes existing
+connections and rotates its capability. Device discoveries, selection and the
+restriction toggle persist across relaunches. Restrictions default off. Last
+request status is historical, not a promise of current access.
+
+The helper rejects unknown Host names (including DNS rebinding), cross-origin
+requests and Sec-Fetch-Site values other than absent, same-origin or none. Phone
+responses do not grant cross-origin browser access. Only one app instance can
+hold the phone-access state directory lock at a time.
 
 The phone page supports an agent picker, streaming chat, safe basic Markdown,
 and Hold to talk using the Mac's `/audio/transcriptions` endpoint (configure a
@@ -242,4 +262,12 @@ endpoint, so audio playback is not offered. HTTPS uses tailnet certificates;
 when unavailable, HTTP still travels inside Tailscale but browser microphone and
 PWA features require HTTPS. On iOS Safari, use Share → Add to Home Screen.
 A missing helper requires a build with Go (`make app`); no helper is downloaded at
-runtime. If a helper exits, the status shows the error; toggle off/on to retry.
+runtime. Team-signed apps require a valid helper signature from the same Team ID.
+Ad-hoc/development apps require the SHA-256 compiled into Swift by `make ts-helper`
+**before** app compilation (`make app` handles this order). The checked-in pin is
+nil, so unprepared development builds fail closed. Sidecars are not trusted.
+Builders signing with a team must set `TS_HELPER_SIGN_IDENTITY` to that app's
+identity and sign/seal the final app bundle after embedding. Helpers that are
+symlinks or group/world-writable are refused, and integrity is rechecked immediately
+before launch. The launch secret travels over stdin, never the child environment.
+If a helper exits, the status shows the error; toggle off/on to retry.

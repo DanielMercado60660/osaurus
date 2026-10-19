@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-import CryptoKit
 import Foundation
 
 @MainActor
@@ -9,6 +8,9 @@ final class TailscalePhoneAccessService: ObservableObject {
     @Published private(set) var state = PhoneAccessState()
     @Published private(set) var enabled: Bool
     @Published private(set) var allowedLogins: String
+    @Published private(set) var restrictDevices: Bool
+    @Published private(set) var allowedDeviceIDs: Set<String>
+    @Published private(set) var devices: [PhoneAccessDevice]
     private let defaults: UserDefaults
     private var process: Process?
     private var input: Pipe?
@@ -23,6 +25,10 @@ final class TailscalePhoneAccessService: ObservableObject {
         self.defaults = defaults
         enabled = defaults.bool(forKey: "phoneAccess.enabled")
         allowedLogins = defaults.string(forKey: "phoneAccess.allowedLogins") ?? ""
+        restrictDevices = defaults.bool(forKey: "phoneAccess.restrictDevices")
+        allowedDeviceIDs = Set(defaults.stringArray(forKey: "phoneAccess.allowedDeviceIDs") ?? [])
+        devices = defaults.data(forKey: "phoneAccess.devices")
+            .flatMap { try? JSONDecoder().decode([PhoneAccessDevice].self, from: $0) } ?? []
     }
 
     func setEnabled(_ value: Bool) {
@@ -36,6 +42,24 @@ final class TailscalePhoneAccessService: ObservableObject {
             .filter { !$0.isEmpty }.joined(separator: ",")
         defaults.set(allowedLogins, forKey: "phoneAccess.allowedLogins")
         stop(); startIfEnabled()
+    }
+
+    func saveDeviceRestrictions(_ restricted: Bool, selectedIDs: Set<String>) {
+        restrictDevices = restricted
+        allowedDeviceIDs = selectedIDs
+        defaults.set(restricted, forKey: "phoneAccess.restrictDevices")
+        defaults.set(selectedIDs.sorted(), forKey: "phoneAccess.allowedDeviceIDs")
+        stop(); startIfEnabled()
+    }
+
+    // Keep discoveries across helper restarts so a denied phone can be selected.
+    // Names are display-only; the helper authorizes the WhoIs StableID.
+    func recordDevice(_ device: PhoneAccessDevice) {
+        if let index = devices.firstIndex(where: { $0.stableID == device.stableID }) {
+            guard devices[index] != device else { return }
+            devices[index] = device
+        } else { devices.append(device) }
+        defaults.set(try? JSONEncoder().encode(devices), forKey: "phoneAccess.devices")
     }
 
     func serverStarted(port: Int) { serverPort = port; stop(); startIfEnabled() }
@@ -79,12 +103,7 @@ final class TailscalePhoneAccessService: ObservableObject {
         restartTask = nil
         do {
             let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/osaurus-ts")
-            let pinURL = helper.appendingPathExtension("sha256")
-            let pin = try String(contentsOf: pinURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-            let digest = SHA256.hash(data: try Data(contentsOf: helper)).map { String(format: "%02x", $0) }.joined()
-            guard pin.count == 64, digest == pin,
-                FileManager.default.isExecutableFile(atPath: helper.path)
-            else { throw PhoneAccessLaunchError.unverifiedHelper }
+            try PhoneAccessHelperIntegrity.validate(helper: helper)
             let directory = OsaurusPaths.root().appendingPathComponent("phone-access", isDirectory: true)
             try FileManager.default.createDirectory(
                 at: directory,
@@ -98,10 +117,11 @@ final class TailscalePhoneAccessService: ObservableObject {
             // Deliberately do not inherit TS_AUTHKEY or other ambient Tailscale configuration.
             child.environment = [
                 "PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory(),
-                "OSAURUS_PHONE_SECRET": token,
                 "OSAURUS_PHONE_UPSTREAM": "http://127.0.0.1:\(port)",
                 "OSAURUS_PHONE_STATE": directory.path,
                 "OSAURUS_PHONE_LOGINS": allowedLogins,
+                "OSAURUS_PHONE_RESTRICT_DEVICES": restrictDevices ? "1" : "0",
+                "OSAURUS_PHONE_DEVICES": allowedDeviceIDs.sorted().joined(separator: ","),
             ]
             child.standardInput = stdin; child.standardOutput = stdout
             child.standardError = FileHandle.nullDevice
@@ -124,7 +144,10 @@ final class TailscalePhoneAccessService: ObservableObject {
                 }
             }
             process = child; input = stdin; output = stdout
+            // Check the path again immediately before Process resolves it.
+            try PhoneAccessHelperIntegrity.validate(helper: helper)
             try child.run()
+            try stdin.fileHandleForWriting.write(contentsOf: Data((token + "\n").utf8))
         } catch {
             stop()
             state.fail(
@@ -138,13 +161,11 @@ final class TailscalePhoneAccessService: ObservableObject {
         while let end = buffer.firstIndex(of: 10) {
             let line = String(decoding: buffer[..<end], as: UTF8.self)
             buffer.removeSubrange(...end)
-            if let event = PhoneAccessStatus.parse(line) { state.receive(event) }
+            if let event = PhoneAccessStatus.parse(line) {
+                if let device = event.device { recordDevice(device) }
+                else { state.receive(event) }
+            }
         }
         if buffer.count > 16_384 { stop(); state.fail("Invalid oversized helper status.") }
     }
-}
-
-private enum PhoneAccessLaunchError: LocalizedError {
-    case unverifiedHelper
-    var errorDescription: String? { "Bundled osaurus-ts digest does not match its build pin" }
 }
