@@ -164,3 +164,12 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   endpointing → T16.
 - T16 merged (per-stage telemetry + Think before speaking, default Off);
   rebuilding + rerunning benchmark.
+- **T16 result** (Think before speaking Off, FluidAudio 0.15.4, Qwen3.5-4B,
+  p50 / p90 from end of speech, p90 = cold first turn incl. model load):
+  end-of-turn 708/746, ASR final 376/417 (speculative, before endpoint ✓),
+  send 730/767, first stream delta 993/2504, first visible token 1382/7734,
+  first sentence 1402/7898, **first audio 1534/8271 ms** (was 3579/12385 at
+  start of day). Reasoning deltas 0. Barge-in observed, stop 0 ms (software).
+  Remaining: 700 ms silence window (→ T17 Smart Turn v3 in MLX Swift) and
+  ≈0.4–0.65 s prompt prefill of the agent system prompt (left as is — trimming
+  it would change agent behavior).
