@@ -2595,6 +2595,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             /// The element is below the fold: absent until the loop performs a
             /// `scroll`, then it stays visible. Exercises scroll-to-find.
             public let revealOnScroll: Bool?
+            /// AX values exposed on successive captures after an edit, before
+            /// the requested value is delivered. Models delayed input without
+            /// wall-clock races; nil keeps edits synchronous.
+            public let editCaptureValues: [String]?
 
             public init(
                 id: String,
@@ -2609,7 +2613,8 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 minTier: String? = nil,
                 clickFailures: Int? = nil,
                 revealAfterCaptures: Int? = nil,
-                revealOnScroll: Bool? = nil
+                revealOnScroll: Bool? = nil,
+                editCaptureValues: [String]? = nil
             ) {
                 self.id = id
                 self.role = role
@@ -2624,6 +2629,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
                 self.clickFailures = clickFailures
                 self.revealAfterCaptures = revealAfterCaptures
                 self.revealOnScroll = revealOnScroll
+                self.editCaptureValues = editCaptureValues
             }
         }
 

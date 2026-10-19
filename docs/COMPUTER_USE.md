@@ -193,6 +193,25 @@ fallback that the `TargetResolver` matches.
 The verb sets a **baseline** effect; the classifier can only ever escalate it
 (never lower it).
 
+`open` resolves installed app metadata using Finder display names, bundle names
+in each preferred language (`InfoPlist.strings` or `InfoPlist.loctable`), bundle
+IDs, and executable names. Matching ignores case and diacritics. Exact paths
+and bundle IDs take precedence; ambiguous names use bundle ID then path order.
+The catalog includes LaunchServices name/ID candidates, running apps, and app
+bundles under the system, local, and user Applications directories and
+CoreServices. An app outside those roots must be known to LaunchServices,
+running, or addressed by its absolute path. No translated app aliases are
+hardcoded. Invalid scalar `target`/`roles` values remain invalid; the retry
+message includes a bounded rendering of the received value and the expected
+object/array shape.
+
+Successful text mutations already wait at the verification boundary: exact
+replacement values can complete immediately; otherwise up to five additional
+AX captures, 50 ms apart, wait for delivery. Append operations require two
+consecutive equal values. The latest real snapshot is returned at the bound,
+even if the expected text never appears. The scripted `delayed-text-delivery`
+eval pins this boundary with two partial captures before the final text.
+
 ## Perception ladder
 
 `ComputerUse/Driver/Mac/CaptureMode.swift`, `ComputerUse/Perception/CaptureRouter.swift`

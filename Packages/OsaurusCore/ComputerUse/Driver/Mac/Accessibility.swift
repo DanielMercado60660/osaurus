@@ -1397,16 +1397,19 @@ func openApplication(
     if let folder = openableFolderURL(forOpenIdentifier: identifier) {
         return await openFolderInFinder(folder)
     }
-    let lowerId = identifier.lowercased()
+    guard let applicationURL = await AccessibilityManager.runOffMain({
+        resolveInstalledApplication(identifier)
+    }) else {
+        return .failure(MacAppError(message: "Application not found: \(identifier)"))
+    }
 
     // Phase 1 — AppKit on the main actor: match an already-running app and
     // activate it for foreground opens. Only Sendable fields cross back.
     let runningMatch: MacAppInfo? = await MainActor.run {
         guard
-            let app = NSWorkspace.shared.runningApplications.first(where: {
-                $0.localizedName?.lowercased() == lowerId
-                    || $0.bundleIdentifier?.lowercased() == lowerId
-            })
+            let app = NSWorkspace.shared.runningApplications
+                .sorted(by: { $0.processIdentifier < $1.processIdentifier })
+                .first(where: { $0.bundleURL?.standardizedFileURL == applicationURL })
         else { return nil }
         if !background {
             app.activate()
@@ -1433,6 +1436,7 @@ func openApplication(
 
     do {
         let info = try await launchApplication(
+            at: applicationURL,
             identifier: identifier,
             background: background
         )
@@ -1545,11 +1549,11 @@ private func axElementHasChildren(_ element: AXUIElement) -> Bool {
     !axChildren(element).isEmpty
 }
 
-/// Launch `identifier` and return its Sendable identity. Runs off the main
-/// actor: `urlForApplication` is a synchronous LaunchServices database query
-/// that can stall, and `openApplication(at:configuration:)` is the async
-/// AppKit launch API (safe from any executor). Only Sendable fields leave.
+/// Launch the catalog-resolved URL and return its Sendable identity. The
+/// async AppKit launch API is safe from any executor. Lookup has already run
+/// off-main and uses the same URL for running-app matching and new launches.
 private func launchApplication(
+    at applicationURL: URL,
     identifier: String,
     background: Bool
 ) async throws -> MacAppInfo {
@@ -1571,27 +1575,7 @@ private func launchApplication(
         )
     }
 
-    if let url = workspace.urlForApplication(withBundleIdentifier: identifier) {
-        return info(try await workspace.openApplication(at: url, configuration: config))
-    }
-
-    let searchPaths = [
-        "/Applications/\(identifier).app",
-        "/System/Applications/\(identifier).app",
-        "/System/Applications/Utilities/\(identifier).app",
-        NSHomeDirectory() + "/Applications/\(identifier).app",
-    ]
-
-    for path in searchPaths where FileManager.default.fileExists(atPath: path) {
-        return info(
-            try await workspace.openApplication(
-                at: URL(fileURLWithPath: path),
-                configuration: config
-            )
-        )
-    }
-
-    throw MacAppError(message: "Application not found: \(identifier)")
+    return info(try await workspace.openApplication(at: applicationURL, configuration: config))
 }
 
 // MARK: - Window/App Listing

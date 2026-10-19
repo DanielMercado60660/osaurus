@@ -79,3 +79,12 @@ Drop a `*.json` file here (copy a sibling). For a CI-deterministic case, set
 `scriptedActions` to the exact `agent_action` arguments-JSON the loop should
 receive — then it runs with no model and is covered by the unit test above.
 Otherwise it's a live-model case scored only when you run the suite with a model.
+## Delayed text delivery regression
+
+`delayed-text-delivery.json` runs in the ScriptedOnly lane through
+`scriptedActions`. A scene element's optional `editCaptureValues` lists the
+transient AX values returned on successive post-edit captures; the requested
+value follows them. The fixture exposes `Hello agai` twice, then `Hello again`.
+It requires one type action and terminal completion in two steps. Removing the
+loop's existing settle boundary leaves the partial value and fails the exact
+value predicate. These are simulated AX values, not live macOS delivery proof.

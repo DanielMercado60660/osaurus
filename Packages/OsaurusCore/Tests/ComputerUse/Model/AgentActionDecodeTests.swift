@@ -104,6 +104,38 @@ final class AgentActionDecodeTests: XCTestCase {
         XCTAssertTrue(reason?.contains("describe") ?? false, "got: \(reason ?? "nil")")
     }
 
+    func testScalarTargetShowsReceivedValueAndCorrection() {
+        let reason = invalidReason(#"{"verb":"click","target":"{'mark': 1}"}"#)
+        XCTAssertTrue(reason?.contains(#"got string "{'mark': 1}""#) ?? false)
+        XCTAssertTrue(reason?.contains(#"must be an object like {"mark": 13}"#) ?? false)
+        XCTAssertEqual(decoded(#"{"verb":"click","target":{"mark":13}}"#)?.target?.mark, 13)
+    }
+
+    func testScalarRolesShowsReceivedValueAndCorrection() {
+        let reason = invalidReason(#"{"verb":"find","roles":"button"}"#)
+        XCTAssertTrue(reason?.contains(#"got string "button""#) ?? false)
+        XCTAssertTrue(reason?.contains(#"must be an array of strings like ["button", "textfield"]"#) ?? false)
+        XCTAssertEqual(decoded(#"{"verb":"find","roles":["button"]}"#)?.roles, ["button"])
+    }
+
+    func testNumericTargetIsNotConvertedToMark() {
+        let reason = invalidReason(#"{"verb":"click","target":13}"#)
+        XCTAssertTrue(reason?.contains("got scalar 13") ?? false)
+        XCTAssertTrue(reason?.contains("must be an object") ?? false)
+    }
+
+    func testRolesErrorEnvelopeCarriesArrayHint() {
+        let reason = invalidReason(#"{"_error":"invalid_tool_arguments","_message":"roles must be an array","_field":"roles"}"#)
+        XCTAssertTrue(reason?.contains(#"["button", "textfield"]"#) ?? false)
+    }
+
+    func testMalformedValueEchoIsBounded() {
+        let json = #"{"verb":"find","roles":""# + String(repeating: "x", count: 5000) + #""}"#
+        let reason = invalidReason(json)
+        XCTAssertNotNil(reason)
+        XCTAssertLessThan(reason?.count ?? Int.max, 500)
+    }
+
     /// A native JSON boolean `mark` is REJECTED, not silently mapped to `1`.
     /// `ArgumentCoercion.int(true)` happens to return `1` (NSNumber.intValue),
     /// but the preflight `SchemaValidator` excludes booleans on purpose:
