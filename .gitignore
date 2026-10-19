@@ -188,3 +188,4 @@ helpers/osaurus-wa/osaurus-wa
 # Copied next to the package so MLX can find it under `swift test`, where
 # Bundle.main is Xcode's xctest rather than the built app.
 **/default.metallib
+fork/metrics/__pycache__/
