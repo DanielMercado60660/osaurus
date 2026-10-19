@@ -34,6 +34,9 @@ public final class TalkModeController: ObservableObject {
     private var gate: TalkSpeechGate?
     private var stream: TTSStreamHandle?
     private var replyEpoch: UInt64?
+    private var captureTiming = TalkCaptureTiming()
+    private var timingSubscription: AnyCancellable?
+    private var releaseSubscription: AnyCancellable?
     private var captureSubscription: AnyCancellable?
     private var chatSubscription: AnyCancellable?
     private var captionSubscription: AnyCancellable?
@@ -253,7 +256,13 @@ public final class TalkModeController: ObservableObject {
         case .activity(let segment, let active, let time):
             dispatch(active ? .speechStarted(segment: segment, at: time) : .speechEnded(segment: segment, at: time))
         case .partial(let segment, let text): dispatch(.partial(segment: segment, text: text))
-        case .final(let segment, let text): dispatch(.final(segment: segment, text: text))
+        case .endOfTurnDecided(let segment, let at):
+            guard snapshot.segments.contains(segment) else { return }
+            captureTiming.endpoints[segment] = at
+        case .final(let segment, let text, let at):
+            guard snapshot.segments.contains(segment) else { return }
+            captureTiming.finals[segment] = at
+            dispatch(.final(segment: segment, text: text))
         case .failed(let message): fail(message)
         case .recognitionFailed(let segment, let message):
             publishAvatar(.reaction(.oops))
@@ -277,6 +286,7 @@ public final class TalkModeController: ObservableObject {
             publishAvatar(.reaction(.surprised))
         }
         snapshot = next
+        captureTiming.retain(next.segments)
         if state != next.state { state = next.state }
         if caption != next.caption { caption = next.caption }
         gate?.update(aec: next.aecActive, playback: next.state == .speaking, ignoreUntil: next.ignoreUntil)
@@ -293,6 +303,9 @@ public final class TalkModeController: ObservableObject {
         let start = ProcessInfo.processInfo.systemUptime
         let epoch = replyEpoch
         chatSubscription = nil
+        timingSubscription = nil
+        releaseSubscription = nil
+        if let epoch { latency.update(epoch: epoch) { $0.finishReasoning(at: start) } }
         ttsSubscription = nil
         captionSubscription = nil
         if epoch != nil, snapshot.state == .userSpeaking || snapshot.state == .endOfTurn,
@@ -318,9 +331,22 @@ public final class TalkModeController: ObservableObject {
         replyEpoch = epoch
         publishAvatar(.began(epoch))
         latency.begin(epoch: epoch, speechEnd: speechEnd)
+        latency.update(epoch: epoch) { captureTiming.apply(segments: snapshot.segments, to: &$0) }
+        timingSubscription = session.streamTimingEvents.sink { [weak self] event in
+            guard let self, self.replyEpoch == epoch, self.snapshot.epoch == epoch else { return }
+            self.latency.update(epoch: epoch) { $0.observe(event) }
+        }
         let handle = TTSService.shared.beginTalkStream(id: "talk-\(epoch)", duplex: duplex,
             voiceOverride: agentID.flatMap { AgentManager.shared.agent(for: $0)?.ttsVoice })
         stream = handle
+        releaseSubscription = handle.releasedChunks.sink { [weak self] _ in
+            guard let self, self.replyEpoch == epoch, self.snapshot.epoch == epoch else { return }
+            self.latency.update(epoch: epoch) {
+                if $0.firstSentenceReleasedMs == nil {
+                    $0.firstSentenceReleasedMs = (ProcessInfo.processInfo.systemUptime - speechEnd) * 1000
+                }
+            }
+        }
         captionSubscription = handle.playedChunks.sink { [weak self] text in
             guard let self, self.replyEpoch == epoch, self.snapshot.epoch == epoch else { return }
             self.publishAvatar(.playback(text, epoch))
@@ -349,20 +375,20 @@ public final class TalkModeController: ObservableObject {
             switch event {
             case .delta(_, let text):
                 self.publishAvatar(.delta(text, epoch))
-                if self.latency.turns.last?.firstTokenMs == nil {
-                    let ms = (ProcessInfo.processInfo.systemUptime - speechEnd) * 1000
-                    self.latency.update(epoch: epoch) { $0.firstTokenMs = ms }
-                    self.logger.info("epoch=\(epoch) end_of_speech_to_first_token_ms=\(ms)")
+                if !text.isEmpty {
+                    self.latency.update(epoch: epoch) { $0.visible(at: ProcessInfo.processInfo.systemUptime) }
                 }
                 handle?.enqueue(text: text)
             case .finished:
+                self.latency.update(epoch: epoch) { $0.finishReasoning(at: ProcessInfo.processInfo.systemUptime) }
                 if let message = session.lastStreamError { self.recoverTurn(message) }
                 else { handle?.finish() }
             case .cancelled:
                 self.recoverTurn(nil)
             }
         }
-        session.send(text, directUserSend: true)
+        latency.update(epoch: epoch) { $0.sendIssuedMs = (ProcessInfo.processInfo.systemUptime - speechEnd) * 1000 }
+        session.send(text, directUserSend: true, talkThinkBeforeSpeaking: configuration.thinkBeforeSpeaking)
         if session.isAvailableForDispatchReattachment { recoverTurn(session.lastStreamError ?? "The chat did not accept the voice turn.") }
     }
 

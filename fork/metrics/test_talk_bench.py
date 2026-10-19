@@ -8,6 +8,13 @@ from unittest.mock import patch
 import talk_bench as bench
 
 
+def complete_row():
+    return {"endOfTurnDecidedMs": 7, "asrFinalMs": 5, "sendIssuedMs": 8,
+            "firstStreamDeltaMs": 9, "firstVisibleTokenMs": 10, "firstTokenMs": 10,
+            "firstSentenceReleasedMs": 11, "firstAudioMs": 20,
+            "reasoningDurationMs": 0, "reasoningDeltaCount": 0}
+
+
 class TalkBenchTests(unittest.TestCase):
     def test_preflight_names_missing_models_without_downloading(self):
         with tempfile.TemporaryDirectory() as home:
@@ -61,7 +68,7 @@ class TalkBenchTests(unittest.TestCase):
                 return bench.run_scenario(Path("/fake/osaurus"), root, [Path("/input.wav")], "test/model", Path(temporary), barge)
 
     def test_complete_latency_samples(self):
-        result = self.scenario([{"firstTokenMs": 10, "firstAudioMs": 20}], {"error": None})
+        result = self.scenario([complete_row()], {"error": None})
         self.assertEqual(result["status"], "COMPLETE")
         self.assertEqual(result["summary"]["firstAudioMs"]["p90"], 20)
 
@@ -73,10 +80,44 @@ class TalkBenchTests(unittest.TestCase):
             self.assertEqual(self.scenario(rows, status, code)["status"], "PARTIAL")
 
     def test_barge_requires_attempt_and_observation(self):
-        rows = [{"firstTokenMs": 10, "firstAudioMs": 20, "bargeInToStopMs": 1}]
+        rows = [dict(complete_row(), bargeInToStopMs=1)]
         for attempted, observed in [(False, False), (True, False), (False, True), (True, True)]:
             result = self.scenario(rows, {"error": None, "bargeInAttempted": attempted, "bargeInObserved": observed}, barge=800)
             self.assertEqual(result["status"], "COMPLETE" if attempted and observed else "PARTIAL")
+
+    def test_each_stage_required_and_reasoning_conditional(self):
+        for field in bench.REQUIRED_FIELDS:
+            row = complete_row()
+            del row[field]
+            self.assertEqual(self.scenario([row], {"error": None})["status"], "PARTIAL", field)
+        row = dict(complete_row(), reasoningDeltaCount=3, reasoningDurationMs=1)
+        self.assertEqual(self.scenario([row], {"error": None})["status"], "PARTIAL")
+        row["firstReasoningMs"] = 9
+        self.assertEqual(self.scenario([row], {"error": None})["status"], "COMPLETE")
+        row["firstSentenceReleasedMs"] = 21
+        self.assertEqual(self.scenario([row], {"error": None})["status"], "PARTIAL")
+
+    def test_stage_percentiles_missing_invalid_and_retention(self):
+        from talk_latency import summarize, METRIC_FIELDS
+        rows = [{field: n for field in METRIC_FIELDS} for n in range(1, 61)]
+        summary = summarize(rows)
+        for field in METRIC_FIELDS:
+            self.assertEqual(summary[field], {"samples": 50, "missing": 0, "p50": 35, "p90": 55})
+        invalid = summarize([{field: value for field in METRIC_FIELDS}
+                             for value in [None, True, -1, float("nan"), float("inf")]])
+        for field in METRIC_FIELDS:
+            self.assertEqual(invalid[field], {"samples": 0, "missing": 5, "p50": None, "p90": None})
+        self.assertEqual(summarize([])["firstReasoningMs"]["samples"], 0)
+
+    def test_asr_order_is_not_assumed_and_legacy_data_stays_missing(self):
+        from talk_latency import summarize
+        early = complete_row()
+        late = dict(early, asrFinalMs=7.5)
+        stats = summarize([early, late, {"firstTokenMs": 10}])
+        self.assertEqual(stats["ordering_errors"], [])
+        self.assertEqual(stats["asr_before_endpoint"], {"samples": 2, "before": 1, "missing": 1})
+        self.assertEqual(stats["sendIssuedMs"]["missing"], 1)
+        self.assertEqual(stats["firstReasoningMs"]["samples"], 0)
 
 
 if __name__ == "__main__":

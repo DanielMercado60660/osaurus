@@ -69,6 +69,7 @@ struct SettingsSearchSelfFindProbe {
             ("Allow Barge-In", "voice.talk.bargeIn"),
             ("Echo Cancellation", "voice.talk.echo"),
             ("Show Captions", "voice.talk.captions"),
+            ("Think before speaking", "voice.talk.thinking"),
 
             ("Show animated avatar", "settings.chat.animatedAvatar"),
             ("Phone access", "server.phoneAccess"),

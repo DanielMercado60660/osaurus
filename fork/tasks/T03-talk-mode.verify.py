@@ -15,13 +15,30 @@ import PackageDescription
 let package = Package(name: "TalkModeProof", platforms: [.macOS(.v15)], targets: [
 .target(name: "OsaurusCore"), .testTarget(name: "OsaurusCoreTests", dependencies: ["OsaurusCore"])])
 ''')
-for f in ['Services/Avatar/AvatarMood.swift','Services/Avatar/AvatarPresentation.swift','Services/Voice/TalkModeReducer.swift','Models/Voice/TalkModeConfiguration.swift','Services/Voice/TTSStream.swift','Services/Voice/TalkAudioEngine.swift','Services/Voice/TalkBenchmarkConfiguration.swift','Services/Voice/TalkBenchmarkAudio.swift','Services/Voice/MarkdownStripper.swift','Utils/StreamingDeltaProcessor.swift','Models/Configuration/SettingsSearchIndex.swift','Models/Configuration/ManagementTab.swift','AppleApps/AppleApp.swift','Services/SearchService.swift']:
+for f in ['Services/Chat/ChatTurnGenerationControls.swift','Services/Avatar/AvatarMood.swift','Services/Avatar/AvatarPresentation.swift','Services/Voice/TalkModeReducer.swift','Models/Voice/TalkModeConfiguration.swift','Services/Voice/TTSStream.swift','Services/Voice/TalkAudioEngine.swift','Services/Voice/TalkBenchmarkConfiguration.swift','Services/Voice/TalkBenchmarkAudio.swift','Services/Voice/MarkdownStripper.swift','Utils/StreamingDeltaProcessor.swift','Models/Configuration/SettingsSearchIndex.swift','Models/Configuration/ManagementTab.swift','AppleApps/AppleApp.swift','Services/SearchService.swift']:
     shutil.copy(core/f,src/Path(f).name)
 s=(core/'Managers/TTSService.swift').read_text(); chunk=s[s.index('enum TTSTextChunker {'):s.index('\nextension Notification.Name',s.index('enum TTSTextChunker {'))]; (src/'TTSTextChunker.swift').write_text('import Foundation\n'+chunk)
-for f in ['Voice/TalkModeTests.swift','Voice/TalkModeRawDeltaTests.swift','Voice/TTSStreamTests.swift','Voice/TTSTextChunkerTests.swift','Configuration/SettingsSearchSelfFindProbe.swift']:
+for f in ['Voice/TalkLatencyTests.swift','Voice/TalkModeTests.swift','Voice/TalkModeRawDeltaTests.swift','Voice/TTSStreamTests.swift','Voice/TTSTextChunkerTests.swift','Configuration/SettingsSearchSelfFindProbe.swift']:
     shutil.copy(core/'Tests'/f,tests/Path(f).name)
 (src/'ProofStubs.swift').write_text('''import Foundation
 func L(_ text: String) -> String { text }
+enum ModelOptionValue: Codable, Sendable, Equatable {
+    case bool(Bool), string(String)
+    var boolValue: Bool? { if case .bool(let v) = self { v } else { nil } }
+    var stringValue: String? { if case .string(let v) = self { v } else { nil } }
+}
+struct ChatCompletionRequest: Codable {
+    var modelOptions: [String: ModelOptionValue]?
+    var enable_thinking: Bool?
+    var reasoning_effort: String?
+}
+enum ModelProfileRegistry {
+    static func normalizedOptions(for id: String, persisted: [String: ModelOptionValue]) -> [String: ModelOptionValue] { persisted }
+}
+enum LocalReasoningCapability {
+    struct Capability: Sendable { var supportsThinking = false; var isToggleableThinking = false }
+    static func resolveForDispatch(modelId: String) async -> Capability { Capability() }
+}
 enum SystemPermission { case calendar, reminders, contacts, notes, automationMail, disk, automationMessages, location, automationMusic }
 struct SidebarItemData { let id: String; let icon: String; let label: String; let badge: Int?; let badgeHighlight: Bool }
 struct MLXModel { let id: String; let name: String; let description: String; let downloadURL: String }
@@ -64,14 +81,15 @@ struct Agent: Identifiable { static let defaultId = UUID(uuidString: "00000000-0
     func agent(for id: UUID) -> Agent? { activeAgent }
 }
 enum AssistantDeltaEvent { case delta(turnId: UUID, text: String), finished, cancelled }
-@MainActor final class ChatSession {
+@MainActor final class ChatSession: ObservableObject {
     var selectedModel: String? = nil
     var selectedModelIsLocal = false
     var isAvailableForDispatchReattachment = true
     var lastStreamError: String?
+    let streamTimingEvents = PassthroughSubject<TalkStreamTimingEvent, Never>()
     let subject = PassthroughSubject<AssistantDeltaEvent, Never>()
     var rawAssistantDeltas: AnyPublisher<AssistantDeltaEvent, Never> { subject.eraseToAnyPublisher() }
-    func send(_ text: String, directUserSend: Bool = false) {}
+    func send(_ text: String, directUserSend: Bool = false, talkThinkBeforeSpeaking: Bool? = nil) {}
     func stop() {}
 }
 @MainActor final class ChatWindowState {
@@ -79,7 +97,7 @@ enum AssistantDeltaEvent { case delta(turnId: UUID, text: String), finished, can
     let session = ChatSession()
     var activeAgent: Agent { AgentManager.shared.activeAgent }
 }
-@MainActor final class ChatWindowManager {
+@MainActor final class ChatWindowManager: ObservableObject {
     static let shared = ChatWindowManager()
     var lastFocusedWindowId: UUID?
     func windowState(id: UUID) -> ChatWindowState? { nil }

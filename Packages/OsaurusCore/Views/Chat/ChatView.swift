@@ -206,6 +206,7 @@ final class ChatSession: ObservableObject {
         assistantDeltaEvents.eraseToAnyPublisher()
     }
     var rawAssistantDeltas: AnyPublisher<AssistantDeltaEvent, Never> { rawAssistantDeltaEvents.eraseToAnyPublisher() }
+    let streamTimingEvents = PassthroughSubject<TalkStreamTimingEvent, Never>()
     private let rawAssistantDeltaEvents = PassthroughSubject<AssistantDeltaEvent, Never>()
     private let assistantDeltaEvents = PassthroughSubject<AssistantDeltaEvent, Never>()
 
@@ -5269,6 +5270,7 @@ final class ChatSession: ObservableObject {
                     currentTurn.finalizeRemoteToolActivity()
                     return ([], currentTurn)
                 }
+                streamTimingEvents.send(.delta(at: ProcessInfo.processInfo.systemUptime))
                 // Mode 2 (remote agent run): the remote device executes the
                 // tools and streams back only a sanitized trace (name + phase +
                 // error state — never raw args/results). Accumulate it into a
@@ -5490,6 +5492,9 @@ final class ChatSession: ObservableObject {
                     }
                 } else if let reasoning = StreamingReasoningHint.decode(delta) {
                     uiReasoningDeltaCount += 1
+                    if !reasoning.isEmpty {
+                        streamTimingEvents.send(.reasoning(at: ProcessInfo.processInfo.systemUptime))
+                    }
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
@@ -6227,7 +6232,7 @@ final class ChatSession: ObservableObject {
         isDirty = true
     }
 
-    func send(_ text: String, attachments: [Attachment] = [], directUserSend: Bool = false) {
+    func send(_ text: String, attachments: [Attachment] = [], directUserSend: Bool = false, talkThinkBeforeSpeaking: Bool? = nil) {
         let alignmentRepairModel = directUserSend && source == .chat && !isRemoteAgentTarget
             ? selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id } : nil
         // The user's clock starts here, not when generation does. Everything
@@ -6299,7 +6304,8 @@ final class ChatSession: ObservableObject {
                 attachments: attachments,
                 hasContent: hasContent,
                 sendRequestedAt: sendRequestedAt,
-                alignmentRepairModel: alignmentRepairModel
+                alignmentRepairModel: alignmentRepairModel,
+                talkThinkBeforeSpeaking: talkThinkBeforeSpeaking
             )
             return
         }
@@ -6347,7 +6353,8 @@ final class ChatSession: ObservableObject {
                 expectedPreSendHandshakeEpoch: handshakeEpoch,
                 sendRequestedAt: sendRequestedAt,
                 awaitedPreSendHandshake: true,
-                alignmentRepairModel: alignmentRepairModel
+                alignmentRepairModel: alignmentRepairModel,
+                talkThinkBeforeSpeaking: talkThinkBeforeSpeaking
             )
         }
     }
@@ -6364,7 +6371,8 @@ final class ChatSession: ObservableObject {
         expectedPreSendHandshakeEpoch: UInt64? = nil,
         sendRequestedAt: Date = Date(),
         awaitedPreSendHandshake: Bool = false,
-        alignmentRepairModel: String? = nil
+        alignmentRepairModel: String? = nil,
+        talkThinkBeforeSpeaking: Bool? = nil
     ) {
         // The pre-send task already checks this after its await. Keep the same
         // guard at the dispatch boundary so future refactors cannot restore
@@ -6503,6 +6511,7 @@ final class ChatSession: ObservableObject {
         let turnSupportsAudio = selectedModelSupportsAudio
         let turnSupportsVideo = selectedModelSupportsVideo
         let imageSettings = imageComposerSettings
+        let turnModelIsLocal = selectedModelIsLocal
         let turnModelOptions = activeModelOptions
         let storedTurnModelOptions = turnModelId.flatMap {
             ModelOptionsStore.shared.storedExplicitOptions(for: $0)
@@ -6515,15 +6524,26 @@ final class ChatSession: ObservableObject {
             // explicit Thinking choice that launch-time cold-cache
             // normalization may have provisionally hidden. No default is
             // synthesized: absent choices still defer to the bundle.
-            let turnGenerationControls = await ChatTurnGenerationControls.captureForSend(
-                modelId: turnModelId,
-                activeModelOptions: turnModelOptions,
-                storedExplicitOptions: storedTurnModelOptions
-            ) { modelId in
-                _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
+            let turnGenerationControls: ChatTurnGenerationControls
+            if let talkThinkBeforeSpeaking {
+                let capability = if turnModelIsLocal, let turnModelId {
+                    await LocalReasoningCapability.resolveForDispatch(modelId: turnModelId)
+                } else { LocalReasoningCapability.Capability.none }
+                turnGenerationControls = .captureForTalk(
+                    activeModelOptions: turnModelOptions,
+                    thinkBeforeSpeaking: talkThinkBeforeSpeaking,
+                    toggleable: capability.isToggleableThinking)
+            } else {
+                turnGenerationControls = await ChatTurnGenerationControls.captureForSend(
+                    modelId: turnModelId,
+                    activeModelOptions: turnModelOptions,
+                    storedExplicitOptions: storedTurnModelOptions
+                ) { modelId in
+                    _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
+                }
             }
             guard self.isRunActive(runId) else { return }
-            if let turnModelId,
+            if talkThinkBeforeSpeaking == nil, let turnModelId,
                 self.selectedModel == turnModelId,
                 self.activeModelOptions == turnModelOptions,
                 ModelOptionsStore.shared.storedExplicitOptions(for: turnModelId) == storedTurnModelOptions,

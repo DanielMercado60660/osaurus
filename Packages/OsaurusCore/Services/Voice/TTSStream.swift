@@ -187,6 +187,8 @@ public final class TTSStreamHandle {
     // Observation only: text of a synthesis chunk whose first buffer completed.
     // Chunks may contain multiple sentences; this does not invent word timestamps.
     var playedChunks: AnyPublisher<String, Never> { playedChunkSubject.eraseToAnyPublisher() }
+    var releasedChunks: AnyPublisher<String, Never> { releasedChunkSubject.eraseToAnyPublisher() }
+    private let releasedChunkSubject = PassthroughSubject<String, Never>()
     private let playedChunkSubject = PassthroughSubject<String, Never>()
     private let subject = PassthroughSubject<TTSStreamEvent, Never>()
     private let player: any TTSStreamPlayer
@@ -228,18 +230,23 @@ public final class TTSStreamHandle {
         if !terminal { player.cancelPlayback() }
     }
 
+    private func release(_ chunk: String) {
+        releasedChunkSubject.send(chunk)
+        continuation.yield(chunk)
+    }
+
     public func enqueue(text: String) {
         guard !inputClosed, !terminal else { return }
-        for chunk in chunker.append(text) { continuation.yield(chunk) }
+        for chunk in chunker.append(text) { release(chunk) }
         if releasePolicy == .conversational && !chunker.releasedFirst {
             if clauseDeadlineReached {
-                for chunk in chunker.releaseFirst(allowClause: true) { continuation.yield(chunk) }
+                for chunk in chunker.releaseFirst(allowClause: true) { release(chunk) }
             } else if firstClauseTask == nil {
                 firstClauseTask = Task { [weak self] in
                     do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
                     guard let self, !self.terminal, !self.inputClosed else { return }
                     self.clauseDeadlineReached = true
-                    for chunk in self.chunker.releaseFirst(allowClause: true) { self.continuation.yield(chunk) }
+                    for chunk in self.chunker.releaseFirst(allowClause: true) { self.release(chunk) }
                 }
             }
         }
@@ -250,7 +257,7 @@ public final class TTSStreamHandle {
         guard !inputClosed, !terminal else { return }
         inputClosed = true
         firstClauseTask?.cancel()
-        for chunk in chunker.finish() { continuation.yield(chunk) }
+        for chunk in chunker.finish() { release(chunk) }
         continuation.finish()
         startIfNeeded()
     }
