@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import Foundation
 import Testing
@@ -241,4 +242,257 @@ struct TalkModePolicyChangeTests {
         #expect(result.0.candidateStart == nil)
         #expect(result.1.isEmpty)
     }
+}
+
+@Suite("Talk mode live-run recovery")
+struct TalkModeRecoveryTests {
+    private func step(_ s: inout TalkModeSnapshot, _ event: TalkModeEvent) -> [TalkModeEffect] {
+        let result = TalkModeReducer.reduce(s, event, config: .default)
+        s = result.0
+        return result.1
+    }
+
+    @Test(arguments: [false, true])
+    func renewedSpeechKeepsEarlierText(earlierFinalReady: Bool) {
+        var s = TalkModeSnapshot()
+        _ = step(&s, .start(aec: true))
+        _ = step(&s, .speechStarted(segment: 1, at: 1))
+        _ = step(&s, .speechEnded(segment: 1, at: 1.5))
+        if earlierFinalReady { _ = step(&s, .final(segment: 1, text: "First part.")) }
+        _ = step(&s, .speechStarted(segment: 2, at: 2.3))
+        _ = step(&s, .speechEnded(segment: 2, at: 2.8))
+        _ = step(&s, .final(segment: 2, text: "Second part."))
+        if !earlierFinalReady {
+            #expect(step(&s, .tick(4)).isEmpty)
+            _ = step(&s, .final(segment: 1, text: "First part."))
+        }
+        #expect(step(&s, .tick(4)) == [.send(text: "First part. Second part.", epoch: s.epoch, speechEnd: 2.8)])
+        #expect(abs(s.speechDuration - 1) < 0.0001)
+    }
+
+    @Test(arguments: [TalkModeState.thinking, .speaking])
+    func turnErrorRecoversAndRejectsOldCallbacks(state: TalkModeState) {
+        var s = TalkModeSnapshot(state: state, epoch: 7, aecActive: true)
+        #expect(step(&s, .turnFailed(epoch: 7)) == [.cancelReply])
+        #expect(s.state == .listening && s.epoch == 8 && s.aecActive)
+        let recovered = s
+        _ = step(&s, .firstAudio(epoch: 7))
+        _ = step(&s, .replyFinished(epoch: 7, at: 3))
+        _ = step(&s, .turnFailed(epoch: 7))
+        #expect(s == recovered)
+        _ = step(&s, .speechStarted(segment: 9, at: 4))
+        _ = step(&s, .speechEnded(segment: 9, at: 4.5))
+        _ = step(&s, .final(segment: 9, text: "Try again."))
+        #expect(step(&s, .tick(6)).count == 1)
+    }
+
+    @Test func replyFailureKeepsConcurrentBargeOnset() {
+        var s = TalkModeSnapshot(state: .speaking, epoch: 1)
+        _ = step(&s, .speechStarted(segment: 2, at: 3))
+        #expect(step(&s, .turnFailed(epoch: 1)) == [.cancelReply])
+        #expect(s.state == .userSpeaking && s.segment == 2 && s.speechStart == 3)
+    }
+
+    @Test(arguments: [false, true])
+    func asrFailureDoesNotStopCaptureOrDiscardNewerText(preview: Bool) {
+        var s = TalkModeSnapshot()
+        _ = step(&s, .start(aec: true))
+        _ = step(&s, .speechStarted(segment: 1, at: 1))
+        if !preview { _ = step(&s, .speechEnded(segment: 1, at: 1.5)) }
+        _ = step(&s, .recognitionFailed(segment: 1))
+        #expect(s.state == .listening)
+        _ = step(&s, .speechStarted(segment: 2, at: 2))
+        _ = step(&s, .speechEnded(segment: 2, at: 2.5))
+        _ = step(&s, .speechStarted(segment: 3, at: 3))
+        _ = step(&s, .speechEnded(segment: 3, at: 3.5))
+        _ = step(&s, .final(segment: 3, text: "Keep this."))
+        _ = step(&s, .recognitionFailed(segment: 2))
+        #expect(step(&s, .tick(5)) == [.send(text: "Keep this.", epoch: s.epoch, speechEnd: 3.5)])
+    }
+
+    @Test func failureOfCurrentAccumulatedSegmentReturnsToListening() {
+        var s = TalkModeSnapshot()
+        _ = step(&s, .start(aec: true))
+        _ = step(&s, .speechStarted(segment: 1, at: 1))
+        _ = step(&s, .speechEnded(segment: 1, at: 1.5))
+        _ = step(&s, .final(segment: 1, text: "Previous words"))
+        _ = step(&s, .speechStarted(segment: 2, at: 2))
+        _ = step(&s, .recognitionFailed(segment: 2))
+        #expect(s.state == .listening)
+        #expect(s.transcript == nil)
+        _ = step(&s, .final(segment: 2, text: "Stale final"))
+        #expect(step(&s, .tick(5)).isEmpty)
+    }
+
+    @Test func routesAndAECPolicy() {
+        #expect(!TalkAudioPolicy.needsRebuild(running: true, inputUnchanged: true))
+        #expect(TalkAudioPolicy.needsRebuild(running: false, inputUnchanged: true))
+        #expect(TalkAudioPolicy.needsRebuild(running: true, inputUnchanged: false))
+        #expect(TalkAudioPolicy.canUseAEC(requested: true, selectedInput: nil, defaultInput: 1))
+        #expect(TalkAudioPolicy.canUseAEC(requested: true, selectedInput: 1, defaultInput: 1))
+        #expect(!TalkAudioPolicy.canUseAEC(requested: true, selectedInput: 2, defaultInput: 1))
+        #expect(!TalkAudioPolicy.canUseAEC(requested: true, selectedInput: 2, defaultInput: nil))
+        #expect(!TalkAudioPolicy.canUseAEC(requested: false, selectedInput: nil, defaultInput: 1))
+        var s = TalkModeSnapshot(state: .speaking, epoch: 1, aecActive: true)
+        _ = step(&s, .aecChanged(false))
+        #expect(!s.aecActive && s.state == .speaking && s.epoch == 1)
+    }
+
+    @Test func toggleDuringStopRemembersTargetAndConsumesOnce() {
+        var restart = TalkRestartRequest()
+        #expect(restart.take() == nil)
+        let agent = UUID(), window = UUID()
+        restart.queue(agentID: agent, windowID: window)
+        let request = restart.take()
+        #expect(request?.agentID == agent && request?.windowID == window)
+        #expect(restart.take() == nil)
+        restart.queue(agentID: nil, windowID: nil)
+        #expect(restart.take() != nil)
+    }
+
+    @Test func speakingIsScopedToOwner() {
+        let owner = UUID(), other = UUID()
+        #expect(TalkAudioPolicy.speakingBelongsToSurface(talkActive: true, owner: owner, surface: owner))
+        #expect(!TalkAudioPolicy.speakingBelongsToSurface(talkActive: true, owner: owner, surface: other))
+        #expect(TalkAudioPolicy.speakingBelongsToSurface(talkActive: false, owner: nil, surface: other))
+    }
+
+    @Test func speculativeFinalReusesOnlyUninterruptedSilence() {
+        var endpoint = TalkFinalizationPolicy()
+        #expect(endpoint.update(active: false, silence: 0.25, endSilence: 0.7, sampleCount: 20_000) == .none)
+        #expect(endpoint.update(active: false, silence: 0.28, endSilence: 0.7, sampleCount: 20_000) == .speculate)
+        #expect(endpoint.update(active: false, silence: 0.5, endSilence: 0.7, sampleCount: 20_000) == .none)
+        #expect(endpoint.update(active: false, silence: 0.71, endSilence: 0.7, sampleCount: 20_000) == .finalize(reuse: true))
+        #expect(endpoint.update(active: false, silence: 0.28, endSilence: 0.7, sampleCount: 20_000) == .speculate)
+        #expect(endpoint.update(active: true, silence: 0, endSilence: 0.7, sampleCount: 20_000) == .cancelSpeculation)
+        #expect(endpoint.update(active: false, silence: 0.71, endSilence: 0.7, sampleCount: 20_000) == .finalize(reuse: false))
+    }
+
+    @Test func longUtteranceClosesInsteadOfFailing() {
+        var endpoint = TalkFinalizationPolicy()
+        #expect(endpoint.update(active: true, silence: 0, endSilence: 0.7, sampleCount: 16_000 * 120) == .finalize(reuse: false))
+        #expect(endpoint.update(active: true, silence: 0, endSilence: 0.7, sampleCount: 4096) == .none)
+    }
+
+    @Test(arguments: [false, true])
+    func speculativeDeliveryBeforeOrAfterCommit(completedFirst: Bool) {
+        var ledger = TalkRecognitionLedger()
+        let id = ledger.begin(segment: 1, kind: .speculative)
+        if completedFirst {
+            #expect(ledger.complete(id, result: .text("hello")) == nil)
+            #expect(ledger.commitSpeculation() == .init(segment: 1, final: true, result: .text("hello")))
+        } else {
+            #expect(ledger.commitSpeculation() == nil)
+            #expect(ledger.complete(id, result: .text("hello")) == .init(segment: 1, final: true, result: .text("hello")))
+        }
+        #expect(ledger.complete(id, result: .text("duplicate")) == nil)
+    }
+
+    @Test func staleRecognitionCannotPublishAndFailuresStayTurnScoped() {
+        var ledger = TalkRecognitionLedger()
+        let preview = ledger.begin(segment: 1, kind: .preview)
+        #expect(ledger.cancelPreviews() == [preview])
+        #expect(ledger.complete(preview, result: .text("stale")) == nil)
+        let speculative = ledger.begin(segment: 1, kind: .speculative)
+        #expect(ledger.complete(speculative, result: .text("incomplete")) == nil)
+        #expect(ledger.cancelSpeculation() == speculative)
+        #expect(ledger.commitSpeculation() == nil)
+        #expect(ledger.complete(speculative, result: .failure("late")) == nil)
+        let final = ledger.begin(segment: 1, kind: .final)
+        #expect(ledger.complete(final, result: .failure("ASR error")) == .init(segment: 1, final: true, result: .failure("ASR error")))
+        let next = ledger.begin(segment: 2, kind: .final)
+        #expect(ledger.complete(next, result: .text("next"))?.segment == 2)
+    }
+}
+
+@Suite("Conversational sentence boundaries")
+struct TalkSentenceBoundaryTests {
+    @Test(arguments: ["Dr.", "Mr.", "vs.", "e.g.", "i.e.", "The value is 3.", "List 1."])
+    func periodIsNotAlwaysSentenceEnd(prefix: String) {
+        var chunker = TTSIncrementalChunker(policy: .conversational)
+        #expect(chunker.append(prefix).isEmpty)
+        let tail = prefix == "The value is 3." ? "5 units. " : " Smith continues. "
+        #expect(chunker.append(tail) == [(prefix + tail).trimmingCharacters(in: .whitespaces)])
+    }
+
+    @Test(arguments: ["Hello!world", "example.com", "Really?yes"])
+    func punctuationNeedsFollowingSpace(text: String) {
+        var chunker = TTSIncrementalChunker(policy: .conversational)
+        #expect(chunker.append(text).isEmpty)
+        #expect(chunker.finish() == TTSTextChunker.split(text))
+    }
+
+    @Test(arguments: ["Okay :) let's go.", "Use x < 5 here.", "A stray ) is fine!", "A < symbol is fine.", "Multiply x * 5 now."])
+    func prosePunctuationDoesNotHoldSpeech(text: String) {
+        var chunker = TTSIncrementalChunker(policy: .conversational)
+        #expect(chunker.append(text) == [text])
+        #expect(chunker.finish().isEmpty)
+    }
+
+    @Test func laterOpenMarkdownDoesNotHoldFirstSentence() {
+        var chunker = TTSIncrementalChunker(policy: .conversational)
+        #expect(chunker.append("First sentence. `unfinished code") == ["First sentence."])
+        #expect(chunker.append("` ends here.").isEmpty)
+        #expect(chunker.finish() == ["unfinished code ends here."])
+    }
+
+    @Test func codeStillWaitsForClosure() {
+        var chunker = TTSIncrementalChunker(policy: .conversational)
+        #expect(chunker.append("```swift\nprint(1). ").isEmpty)
+        #expect(chunker.append("```\nNow speak.") == ["Now speak."])
+    }
+}
+
+@Suite("Talk capture format renegotiation")
+struct TalkCaptureFormatTests {
+    @Test func usesEachBuffersSampleRate() throws {
+        let resampler = TalkCaptureResampler()
+        for rate in [48_000.0, 44_100, 16_000, 24_000] {
+            let format = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 1, interleaved: false))
+            let input = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(rate / 10)))
+            input.frameLength = input.frameCapacity
+            for index in 0..<Int(input.frameLength) { input.floatChannelData![0][index] = 0.25 }
+            let samples = resampler.convert(input)
+            // AVAudioConverter primes its filter once per format change.
+            #expect(abs(samples.count - 1600) <= 256)
+            #expect(abs(resampler.convert(input).count - 1600) <= 32)
+            #expect(samples.allSatisfy { $0.isFinite })
+            #expect(samples.contains { abs($0 - 0.25) < 0.01 })
+        }
+    }
+}
+
+@Suite("Talk route notification coalescing")
+struct TalkRouteRecoveryTests {
+    @Test func notificationsCoalesceAndShutdownInvalidatesPendingWork() async throws {
+        let queue = DispatchQueue(label: "talk-route-test")
+        let recovery = TalkRouteRecovery(queue: queue)
+        let record = TalkRouteTestRecord()
+        let start = ProcessInfo.processInfo.systemUptime
+        queue.async {
+            recovery.request { record.record() }
+            recovery.request { record.record() }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        queue.async { recovery.request { record.record() } }
+        try await Task.sleep(for: .milliseconds(450))
+        #expect(record.times.count == 1)
+        #expect((record.times.first ?? start) - start >= 0.39)
+        await withCheckedContinuation { continuation in
+            queue.async {
+                recovery.request { record.record() }
+                recovery.cancel()
+                continuation.resume()
+            }
+        }
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(record.times.count == 1)
+    }
+}
+
+private final class TalkRouteTestRecord: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [TimeInterval] = []
+    var times: [TimeInterval] { lock.withLock { values } }
+    func record() { lock.withLock { values.append(ProcessInfo.processInfo.systemUptime) } }
 }

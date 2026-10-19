@@ -1108,11 +1108,13 @@ public final class SpeechService: ObservableObject {
     /// wake-word/continuous input before installing the shared duplex graph.
     func startTalkTranscription(duplex: TalkAudioEngine, gate: TalkSpeechGate,
                                 echoCancellation: Bool) async throws -> Bool {
-        guard AudioInputManager.shared.selectedInputSource == .microphone else {
-            throw SpeechError.transcriptionFailed("Talk mode requires a microphone input, not system audio.")
-        }
-        if !microphonePermissionGranted {
-            guard await requestMicrophonePermission() else { throw SpeechError.microphonePermissionDenied }
+        if !duplex.usesFileInput {
+            guard AudioInputManager.shared.selectedInputSource == .microphone else {
+                throw SpeechError.transcriptionFailed("Talk mode requires a microphone input, not system audio.")
+            }
+            if !microphonePermissionGranted {
+                guard await requestMicrophonePermission() else { throw SpeechError.microphonePermissionDenied }
+            }
         }
         try Task.checkCancellation()
         try await ensureModelLoaded()
@@ -1123,7 +1125,7 @@ public final class SpeechService: ObservableObject {
         currentTranscription = ""
         confirmedTranscription = ""
         isSpeechDetected = false
-        let selected = AudioInputManager.shared.selectedDeviceId
+        let selected = duplex.usesFileInput ? nil : AudioInputManager.shared.selectedDeviceId
         let deviceID = selected.flatMap { AudioInputManager.shared.getAudioDeviceId(for: $0) }
         guard selected == nil || deviceID != nil else {
             throw SpeechError.transcriptionFailed("The selected microphone is unavailable. Select another device in Voice Setup.")
@@ -1140,7 +1142,13 @@ public final class SpeechService: ObservableObject {
             routeChanged: { [weak self, weak duplex] in
                 Task { @MainActor in
                     guard let self, let duplex, self.talkAudio === duplex else { return }
-                    self.talkCaptureEvents.send(.failed("Audio device changed. Restart talk mode."))
+                    self.talkCaptureEvents.send(.failed("Unable to rebuild talk audio after the device changed."))
+                }
+            },
+            aecChanged: { [weak self, weak duplex] active in
+                Task { @MainActor in
+                    guard let self, let duplex, self.talkAudio === duplex else { return }
+                    self.talkCaptureEvents.send(.aecChanged(active))
                 }
             })
         try Task.checkCancellation()
@@ -1562,6 +1570,8 @@ private actor TranscriptionWorker {
     private let talkGate: TalkSpeechGate?
     private var recognitionTask: Task<Void, Never>?
     private var recognitionID = UUID()
+    private var recognitionLedger = TalkRecognitionLedger()
+    private var failedRecognitionSegments: Set<Int> = []
     private var recognitionTasks: [UUID: Task<Void, Never>] = [:]
     private let vadThreshold: Float
     private let silenceThresholdSeconds: Double
@@ -1612,6 +1622,8 @@ private actor TranscriptionWorker {
     func stop() {
         for recognition in recognitionTasks.values { recognition.cancel() }
         recognitionTasks.removeAll()
+        recognitionLedger = TalkRecognitionLedger()
+        failedRecognitionSegments.removeAll()
         recognitionTask = nil
         task?.cancel()
         continuation?.finish()
@@ -1731,12 +1743,23 @@ private actor TranscriptionWorker {
         var active = false
         var lastSpeech = ProcessInfo.processInfo.systemUptime
         var lastPreview = lastSpeech
+        var endpoint = TalkFinalizationPolicy()
         while audioBuffer.isActive && !Task.isCancelled {
             do { try await Task.sleep(for: .milliseconds(50)) } catch { break }
-            let fresh = convertTo16kHz(audioBuffer.getAndClear())
+            if failedRecognitionSegments.remove(segment) != nil && inSegment {
+                cancelTalkSpeculation()
+                utterance = []
+                recent = []
+                inSegment = false
+                active = false
+                endpoint = TalkFinalizationPolicy()
+                continuation?.yield(.speechActivity(false))
+            }
+            failedRecognitionSegments = failedRecognitionSegments.filter { $0 >= segment }
+            let captured = audioBuffer.getAndClearTimed()
+            let fresh = convertTo16kHz(captured.samples)
             guard !fresh.isEmpty else { continue }
             recent.append(contentsOf: fresh)
-            // Retain 256 ms of onset before VAD crosses the threshold.
             if recent.count > VadManager.chunkSize { recent.removeFirst(recent.count - VadManager.chunkSize) }
             if inSegment { utterance.append(contentsOf: fresh) }
             guard recent.count == VadManager.chunkSize else { continue }
@@ -1752,25 +1775,43 @@ private actor TranscriptionWorker {
                         utterance = recent
                         lastPreview = now
                     }
-                    lastSpeech = now
+                    // Capture timestamp of the last voiced frame, not ASR/VAD
+                    // completion or the first subsequent sub-threshold chunk.
+                    lastSpeech = captured.end
                 }
                 if detected != active {
                     active = detected
                     continuation?.yield(.speechActivity(detected))
-                    continuation?.yield(.talk(.activity(segment: segment, active: detected, at: now)))
+                    let time = detected ? captured.end - Double(fresh.count) / 16_000 : lastSpeech
+                    continuation?.yield(.talk(.activity(segment: segment, active: detected, at: time)))
                 }
-                if inSegment && !active && now - lastSpeech >= gate.silenceSeconds {
-                    recognizeTalk(utterance, segment: segment, final: true)
+                guard inSegment else { continue }
+                switch endpoint.update(active: active, silence: captured.end - lastSpeech,
+                                       endSilence: gate.silenceSeconds, sampleCount: utterance.count) {
+                case .cancelSpeculation:
+                    cancelTalkSpeculation()
+                case .speculate:
+                    recognizeTalk(utterance, segment: segment, kind: .speculative)
+                case .finalize(let reuse):
+                    if active {
+                        active = false
+                        continuation?.yield(.speechActivity(false))
+                        continuation?.yield(.talk(.activity(segment: segment, active: false, at: lastSpeech)))
+                    }
+                    if reuse {
+                        if let delivery = recognitionLedger.commitSpeculation() { deliverTalkRecognition(delivery) }
+                    } else {
+                        cancelTalkSpeculation()
+                        recognizeTalk(utterance, segment: segment, kind: .final)
+                    }
                     utterance = []
                     inSegment = false
-                } else if inSegment && now - lastPreview >= 1 && recognitionTask == nil {
-                    recognizeTalk(utterance, segment: segment, final: false)
-                    lastPreview = now
-                }
-                // Bound microphone memory without silently truncating a user turn.
-                if utterance.count > 16_000 * 120 {
-                    continuation?.yield(.talk(.failed("Talk turn exceeded two minutes. Restart talk mode for another turn.")))
-                    break
+                    recent = []
+                case .none:
+                    if active && now - lastPreview >= 1 && recognitionTask == nil {
+                        recognizeTalk(utterance, segment: segment, kind: .preview)
+                        lastPreview = now
+                    }
                 }
             } catch {
                 continuation?.yield(.talk(.failed("Voice activity detection failed: \(error.localizedDescription)")))
@@ -1780,37 +1821,52 @@ private actor TranscriptionWorker {
         continuation?.finish()
     }
 
-    private func recognizeTalk(_ samples: [Float], segment: Int, final: Bool) {
+    private func cancelTalkSpeculation() {
+        if let id = recognitionLedger.cancelSpeculation() { recognitionTasks[id]?.cancel() }
+    }
+
+    private func recognizeTalk(_ samples: [Float], segment: Int, kind: TalkRecognitionLedger.Kind) {
+        if kind != .preview {
+            for id in recognitionLedger.cancelPreviews() { recognitionTasks[id]?.cancel() }
+        }
         let previous = recognitionTask
-        let id = UUID()
+        let id = recognitionLedger.begin(segment: segment, kind: kind)
         recognitionID = id
         recognitionTask = Task { [weak self, asrManager] in
+            // Even a cancelled preview must relinquish the shared ASR manager
+            // before the next call. Cancellation suppresses its stale delivery.
             await previous?.value
-            guard !Task.isCancelled else { return }
+            if Task.isCancelled { await self?.finishTalkRecognition(id, result: nil); return }
             do {
                 var decoder = await SpeechDecoderStateFactory.make(for: asrManager.manager)
                 let result = try await asrManager.manager.transcribe(samples, decoderState: &decoder)
-                guard !Task.isCancelled else { return }
-                await self?.deliverTalkRecognition(result.text, segment: segment, final: final, id: id)
+                await self?.finishTalkRecognition(id, result: Task.isCancelled ? nil : .text(result.text))
             } catch {
-                guard !Task.isCancelled else { return }
-                await self?.failTalkRecognition(error.localizedDescription, id: id)
+                await self?.finishTalkRecognition(id, result: Task.isCancelled ? nil : .failure(error.localizedDescription))
             }
         }
         recognitionTasks[id] = recognitionTask
     }
 
-    private func failTalkRecognition(_ message: String, id: UUID) {
+    private func finishTalkRecognition(_ id: UUID, result: TalkRecognitionLedger.Result?) {
         recognitionTasks[id] = nil
-        continuation?.yield(.talk(.failed("Transcription failed: \(message)")))
         if recognitionID == id { recognitionTask = nil }
+        if let result, let delivery = recognitionLedger.complete(id, result: result) {
+            deliverTalkRecognition(delivery)
+        }
     }
 
-    private func deliverTalkRecognition(_ text: String, segment: Int, final: Bool, id: UUID) {
-        recognitionTasks[id] = nil
-        continuation?.yield(final ? .final(text) : .partial(text))
-        continuation?.yield(.talk(final ? .final(segment: segment, text: text) : .partial(segment: segment, text: text)))
-        if recognitionID == id { recognitionTask = nil }
+    private func deliverTalkRecognition(_ delivery: TalkRecognitionLedger.Delivery) {
+        switch delivery.result {
+        case .failure(let message):
+            failedRecognitionSegments.insert(delivery.segment)
+            continuation?.yield(.talk(.recognitionFailed(segment: delivery.segment,
+                message: "Transcription failed: \(message)")))
+        case .text(let text):
+            continuation?.yield(delivery.final ? .final(text) : .partial(text))
+            continuation?.yield(.talk(delivery.final ? .final(segment: delivery.segment, text: text)
+                                     : .partial(segment: delivery.segment, text: text)))
+        }
     }
 
     private func convertTo16kHz(_ samples: [Float]) -> [Float] {
@@ -1896,6 +1952,7 @@ private actor TranscriptionWorker {
 
 private final class ThreadSafeAudioBuffer: @unchecked Sendable {
     private var samples: [Float] = []
+    private var lastSampleTime: TimeInterval = 0
     private var retainedSamples: [Float] = []
     private var _isActive: Bool = false
     private var _level: Float = 0.0
@@ -1922,6 +1979,7 @@ private final class ThreadSafeAudioBuffer: @unchecked Sendable {
         lock.withLock {
             if _isActive {
                 samples.append(contentsOf: newSamples)
+                lastSampleTime = ProcessInfo.processInfo.systemUptime
                 retainedSamples.append(contentsOf: newSamples)
                 if retainedSamples.count > maxRetainedSamples {
                     retainedSamples.removeFirst(retainedSamples.count - maxRetainedSamples)
@@ -1935,6 +1993,14 @@ private final class ThreadSafeAudioBuffer: @unchecked Sendable {
             let current = samples
             samples = []
             return current
+        }
+    }
+
+    func getAndClearTimed() -> (samples: [Float], end: TimeInterval) {
+        lock.withLock {
+            let current = samples
+            samples = []
+            return (current, lastSampleTime)
         }
     }
 

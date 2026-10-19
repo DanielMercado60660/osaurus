@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import os
@@ -31,6 +32,10 @@ public final class TalkModeController: ObservableObject {
     private var startup: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
     private var shouldResumeVAD = false
+    private var restartRequest = TalkRestartRequest()
+    private var benchmarkTask: Task<Void, Never>?
+    private var benchmarkFinished = false
+    private var benchmarkInterruptedRendering = false
 
     private init() {
         configurationSubscription = NotificationCenter.default.publisher(for: .voiceConfigurationChanged)
@@ -48,16 +53,21 @@ public final class TalkModeController: ObservableObject {
 
     func initialize() {
         TalkModeHotKey.shared.register { TalkModeController.shared.toggle() }
+        initializeBenchmark()
     }
 
     func owns(_ session: ChatSession) -> Bool { isActive && self.session === session }
 
     func toggle(agentID requestedAgentID: UUID? = nil, windowID requestedWindowID: UUID? = nil) {
+        if isStopping {
+            restartRequest.queue(agentID: requestedAgentID ?? agentID, windowID: requestedWindowID ?? windowID)
+            return
+        }
         if isActive { stop(); return }
         let manager = ChatWindowManager.shared
         let focused = (requestedWindowID ?? manager.lastFocusedWindowId).flatMap { manager.windowState(id: $0) }
         let id = requestedAgentID ?? focused?.activeAgent.id ?? AgentManager.shared.activeAgent.id
-        guard configuration.enabledAgentIds.contains(id) else {
+        guard configuration.enabledAgentIds.contains(id) || TalkBenchmarkConfiguration.inputRequested else {
             lastError = "Enable this agent in Voice → Talk Mode first."
             ToastManager.shared.error("Talk mode is disabled", message: lastError!)
             return
@@ -75,12 +85,12 @@ public final class TalkModeController: ObservableObject {
         let target: UUID
         if let focused, focused.activeAgent.id == id {
             target = focused.windowId
-            manager.showWindow(id: target)
+            if !TalkBenchmarkConfiguration.inputRequested { manager.showWindow(id: target) }
         } else if let existing = manager.findWindows(byAgentId: id).first {
             target = existing.id
-            manager.showWindow(id: target)
+            if !TalkBenchmarkConfiguration.inputRequested { manager.showWindow(id: target) }
         } else {
-            target = manager.createWindow(agentId: id)
+            target = manager.createWindow(agentId: id, showImmediately: !TalkBenchmarkConfiguration.inputRequested)
         }
         guard let session = manager.windowState(id: target)?.session else { return }
         guard session.isAvailableForDispatchReattachment else {
@@ -91,6 +101,7 @@ public final class TalkModeController: ObservableObject {
         agentID = id
         windowID = target
         lastError = nil
+        TTSService.shared.stop()
         isStarting = true
         NotificationCenter.default.post(name: .talkModeWillStart, object: nil)
         shouldResumeVAD = VADService.shared.state == .listening || VADService.shared.state == .starting
@@ -112,7 +123,13 @@ public final class TalkModeController: ObservableObject {
                 self.isStarting = false
                 self.dispatch(.start(aec: aec))
                 self.logger.info("capture started aec=\(aec)")
+                if !aec && self.configuration.echoCancellationEnabled && !duplex.usesFileInput {
+                    ToastManager.shared.info("Talk mode", message: "Echo cancellation is unavailable for this audio route; using the selected microphone and default speaker.")
+                }
                 self.startTicker()
+                if let config = try TalkBenchmarkConfiguration.parse(ProcessInfo.processInfo.environment) {
+                    self.benchmarkTask = Task { await self.runBenchmark(config, duplex: duplex) }
+                }
             } catch {
                 if !Task.isCancelled { self.fail(error.localizedDescription) }
             }
@@ -125,6 +142,7 @@ public final class TalkModeController: ObservableObject {
         isStarting = false
         let startup = self.startup
         startup?.cancel()
+        benchmarkTask?.cancel()
         ticker?.cancel()
         ticker = nil
         captureSubscription = nil
@@ -142,10 +160,13 @@ public final class TalkModeController: ObservableObject {
             self.agentID = nil
             self.windowID = nil
             self.aecActive = false
-            self.isStopping = false
             if self.shouldResumeVAD {
                 self.shouldResumeVAD = false
                 await VADService.shared.resumeAfterChat()
+            }
+            self.isStopping = false
+            if let request = self.restartRequest.take() {
+                self.toggle(agentID: request.agentID, windowID: request.windowID)
             }
         }
     }
@@ -164,7 +185,8 @@ public final class TalkModeController: ObservableObject {
                 self.dispatch(.tick(ProcessInfo.processInfo.systemUptime))
                 // A rejected send or a cancelled warm-up may never enter isStreaming.
                 if self.replyEpoch != nil, self.session?.isAvailableForDispatchReattachment == true, self.stream != nil {
-                    self.stream?.finish()
+                    if let message = self.session?.lastStreamError { self.recoverTurn(message) }
+                    else { self.stream?.finish() }
                 }
             }
         }
@@ -177,6 +199,17 @@ public final class TalkModeController: ObservableObject {
         case .partial(let segment, let text): dispatch(.partial(segment: segment, text: text))
         case .final(let segment, let text): dispatch(.final(segment: segment, text: text))
         case .failed(let message): fail(message)
+        case .recognitionFailed(let segment, let message):
+            lastError = message
+            ToastManager.shared.error("Could not transcribe this turn", message: message)
+            dispatch(.recognitionFailed(segment: segment))
+        case .aecChanged(let active):
+            let wasActive = aecActive
+            aecActive = active
+            dispatch(.aecChanged(active))
+            if wasActive && !active {
+                ToastManager.shared.info("Talk mode", message: "Echo cancellation is unavailable on the new route; talk mode is still listening.")
+            }
         }
     }
 
@@ -199,10 +232,15 @@ public final class TalkModeController: ObservableObject {
         let epoch = replyEpoch
         chatSubscription = nil
         ttsSubscription = nil
+        if epoch != nil, snapshot.state == .userSpeaking || snapshot.state == .endOfTurn,
+           duplex?.isBenchmarkRendering == true {
+            benchmarkInterruptedRendering = true
+        }
         stream?.cancel()
         stream = nil
         let stopped = ProcessInfo.processInfo.systemUptime
-        if let epoch, snapshot.state == .userSpeaking || snapshot.state == .endOfTurn {
+        if let epoch, duplex?.usesFileInput == true,
+           snapshot.state == .userSpeaking || snapshot.state == .endOfTurn {
             let ms = (stopped - start) * 1000
             latency.update(epoch: epoch) { $0.bargeInToStopMs = ms }
             logger.info("epoch=\(epoch) barge_in_to_player_stop_ms=\(ms)")
@@ -213,7 +251,7 @@ public final class TalkModeController: ObservableObject {
 
     private func send(_ text: String, epoch: UInt64, speechEnd: TimeInterval) {
         guard let session, let duplex else { return }
-        guard session.isAvailableForDispatchReattachment else { fail("The chat is busy. Restart talk mode when the current turn settles."); return }
+        guard session.isAvailableForDispatchReattachment else { recoverTurn("The previous chat turn is still settling. Please try again."); return }
         replyEpoch = epoch
         latency.begin(epoch: epoch, speechEnd: speechEnd)
         let handle = TTSService.shared.beginTalkStream(id: "talk-\(epoch)", duplex: duplex,
@@ -232,8 +270,8 @@ public final class TalkModeController: ObservableObject {
                 self.replyEpoch = nil
                 self.chatSubscription = nil
                 self.dispatch(.replyFinished(epoch: epoch, at: now))
-            case .cancelled: self.fail("Talk playback was interrupted by another audio request.")
-            case .failed(_, let message): self.fail(message)
+            case .cancelled: self.recoverTurn(nil)
+            case .failed(_, let message): self.recoverTurn(message)
             }
         }
         chatSubscription = session.rawAssistantDeltas.sink { [weak self, weak handle] event in
@@ -247,14 +285,107 @@ public final class TalkModeController: ObservableObject {
                 }
                 handle?.enqueue(text: text)
             case .finished:
-                if let message = session.lastStreamError { self.fail(message) }
+                if let message = session.lastStreamError { self.recoverTurn(message) }
                 else { handle?.finish() }
             case .cancelled:
-                self.stop()
+                self.recoverTurn(nil)
             }
         }
         session.send(text, directUserSend: true)
-        if session.isAvailableForDispatchReattachment { fail(session.lastStreamError ?? "The chat did not accept the voice turn.") }
+        if session.isAvailableForDispatchReattachment { recoverTurn(session.lastStreamError ?? "The chat did not accept the voice turn.") }
+    }
+
+    private func initializeBenchmark() {
+        guard TalkBenchmarkConfiguration.inputRequested else { return }
+        Task {
+            do {
+                guard let config = try TalkBenchmarkConfiguration.parse(ProcessInfo.processInfo.environment),
+                      let selection = config.autostart else { return }
+                let id: UUID
+                switch selection { case .default: id = Agent.defaultId; case .id(let value): id = value }
+                guard AgentManager.shared.agent(for: id) != nil else { throw TalkBenchmarkError("Unknown AUTOSTART agent: \(id)") }
+                try await benchmarkWait(timeoutMs: config.timeoutMs, checkLifecycle: false) { TTSService.shared.isModelReady }
+                toggle(agentID: id)
+                try await benchmarkWait(timeoutMs: config.timeoutMs, checkLifecycle: false) { !self.isStarting }
+                guard self.state != .off else { throw TalkBenchmarkError(self.lastError ?? "Talk startup failed") }
+            } catch { finishBenchmark(error: error.localizedDescription, bargeInAttempted: false) }
+        }
+    }
+
+    private func benchmarkWait(timeoutMs: Int, checkLifecycle: Bool = true, until predicate: () -> Bool) async throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + Double(timeoutMs) / 1000
+        while !predicate() {
+            try Task.checkCancellation()
+            if checkLifecycle && (state == .off || isStopping) { throw TalkBenchmarkError(lastError ?? "Talk stopped before input completed") }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw TalkBenchmarkError("Timed out waiting for talk startup, recognition, or reply") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    private func runBenchmark(_ config: TalkBenchmarkConfiguration, duplex: TalkAudioEngine) async {
+        var bargeInAttempted = false
+        do {
+            // Fresh history for this run; epochs still come from the real reducer.
+            latency = TalkLatencyHistory()
+            for (index, url) in config.inputs.enumerated() {
+                let previousTurns = latency.turns.count
+                try await duplex.playInput(url, leadingMs: index == 1 && config.bargeInAfterMs != nil ? 0 : config.leadingSilenceMs,
+                                           trailingMs: config.trailingSilenceMs)
+                if index == 0, config.inputs.count > 1, let delay = config.bargeInAfterMs {
+                    try await benchmarkWait(timeoutMs: config.timeoutMs) {
+                        self.latency.turns.count > previousTurns && self.latency.turns.last?.firstAudioMs != nil
+                    }
+                    if let turn = latency.turns.last, let firstAudioMs = turn.firstAudioMs {
+                        let remaining = turn.speechEnd + (firstAudioMs + Double(delay)) / 1000 - ProcessInfo.processInfo.systemUptime
+                        if remaining > 0 { try await Task.sleep(for: .seconds(remaining)) }
+                    }
+                    // Only call it an attempted playback interruption if audio is still playing.
+                    bargeInAttempted = state == .speaking && duplex.isBenchmarkRendering
+                } else {
+                    try await benchmarkWait(timeoutMs: config.timeoutMs) {
+                        self.latency.turns.count > previousTurns && self.state == .listening
+                            && self.session?.isAvailableForDispatchReattachment == true
+                    }
+                }
+            }
+            finishBenchmark(error: lastError, bargeInAttempted: bargeInAttempted)
+        } catch { finishBenchmark(error: lastError ?? error.localizedDescription, bargeInAttempted: bargeInAttempted) }
+    }
+
+    private func finishBenchmark(error: String?, bargeInAttempted: Bool) {
+        guard !benchmarkFinished else { return }
+        benchmarkFinished = true
+        // The history stays compatible with the T03 summarizer. A sidecar records
+        // failures/missed barge-in separately; missing samples are never zero-filled.
+        let env = ProcessInfo.processInfo.environment
+        if let path = env["OSAURUS_TALK_METRICS_OUT"], path.hasPrefix("/") {
+            do {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                try encoder.encode(latency.turns).write(to: URL(fileURLWithPath: path), options: .atomic)
+                let status: [String: Any] = ["error": error as Any? ?? NSNull(),
+                    "bargeInAttempted": bargeInAttempted,
+                    "bargeInObserved": benchmarkInterruptedRendering && latency.turns.contains { $0.bargeInToStopMs != nil },
+                    "inputCount": env["OSAURUS_TALK_INPUT_WAV"]?.split(separator: ",").count ?? 0,
+                    "evidence": "Real VAD/ASR/chat/TTS; paced null sink. First audio is buffer completion; barge-in is confirmed interruption to sink stop. No acoustic proof."]
+                try JSONSerialization.data(withJSONObject: status, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: URL(fileURLWithPath: path + ".status.json"), options: .atomic)
+            } catch { NSLog("[TalkBenchmark] Cannot write metrics: %@", error.localizedDescription) }
+        }
+        if let error { NSLog("[TalkBenchmark] Failed: %@", error) }
+        stop()
+        Task {
+            while isStopping { try? await Task.sleep(for: .milliseconds(20)) }
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
+    private func recoverTurn(_ message: String?) {
+        if let message {
+            lastError = message
+            ToastManager.shared.error("Talk reply interrupted", message: message)
+        }
+        dispatch(.turnFailed(epoch: snapshot.epoch))
     }
 
     private func fail(_ message: String) {

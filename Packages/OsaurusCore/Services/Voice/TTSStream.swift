@@ -38,9 +38,12 @@ struct TTSIncrementalChunker {
 
     /// Called by the stream's 500 ms deadline as well as by incoming deltas.
     mutating func releaseFirst(allowClause: Bool) -> [String] {
-        guard policy == .conversational, !releasedFirst, Self.markdownIsClosed(text, includingStrong: true) else { return [] }
+        guard policy == .conversational, !releasedFirst else { return [] }
+        // A later unfinished construct must not hold an already closed sentence.
+        let candidate = Self.firstSentenceCandidate(text)
+        guard Self.markdownIsClosed(candidate, includingStrong: true) else { return [] }
         let plain = MarkdownStripper.plainText(from: text)
-        var boundary = plain.firstIndex(where: { ".!?".contains($0) })
+        var boundary = Self.sentenceBoundary(in: plain)
         if boundary == nil && allowClause {
             boundary = plain.indices.first { index in
                 ",;".contains(plain[index]) && plain.distance(from: plain.startIndex, to: index) >= 39
@@ -63,8 +66,8 @@ struct TTSIncrementalChunker {
         text += delta
         // An unfinished Markdown construct can retroactively remove text (in
         // particular a fenced code block or link URL). Wait for its closure.
-        guard Self.markdownIsClosed(text, includingStrong: policy == .conversational) else { return [] }
         let first = releaseFirst(allowClause: false)
+        guard Self.markdownIsClosed(text, includingStrong: policy == .conversational) else { return first }
         let chunks = TTSTextChunker.split(remainingText)
         let stableCount = max(0, chunks.count - 1)
         guard stableCount > emitted else { return first }
@@ -83,23 +86,72 @@ struct TTSIncrementalChunker {
         return ready
     }
 
-    private static func markdownIsClosed(_ text: String, includingStrong: Bool = false) -> Bool {
-        if includingStrong {
-            for marker in ["**", "__"] {
-                if (text.components(separatedBy: marker).count - 1) % 2 != 0 { return false }
+    private static func sentenceBoundary(in text: String) -> String.Index? {
+        for index in text.indices where ".!?".contains(text[index]) {
+            let next = text.index(after: index)
+            guard next == text.endIndex || text[next].isWhitespace else { continue }
+            if text[index] == "." {
+                let before = text[..<index]
+                if before.last?.isNumber == true || (next < text.endIndex && text[next].isNumber) { continue }
+                let word = before.split(whereSeparator: { $0.isWhitespace }).last?.lowercased() ?? ""
+                if ["dr", "mr", "mrs", "ms", "prof", "e.g", "i.e", "e", "i", "vs", "etc"].contains(word) { continue }
             }
+            return index
         }
-        // Conservative: unmatched markup delays speech until finish rather
-        // than speaking a URL, code, or formatting delimiter prematurely.
-        for marker in ["```", "~~~", "`", "*", "_", "~~"] {
+        return nil
+    }
+
+    private static func firstSentenceCandidate(_ text: String) -> String {
+        // Include closing emphasis/code markers before checking the raw sentence.
+        for index in text.indices where ".!?".contains(text[index]) {
+            var end = text.index(after: index)
+            while end < text.endIndex && "*_~`".contains(text[end]) { end = text.index(after: end) }
+            guard end == text.endIndex || text[end].isWhitespace else { continue }
+            let candidate = String(text[..<end])
+            if markdownIsClosed(candidate, includingStrong: true),
+               sentenceBoundary(in: MarkdownStripper.plainText(from: candidate)) != nil { return candidate }
+        }
+        return text
+    }
+
+    private static func markdownIsClosed(_ text: String, includingStrong: Bool = false) -> Bool {
+        for marker in ["```", "~~~", "`"] {
             if (text.components(separatedBy: marker).count - 1) % 2 != 0 { return false }
         }
-        for (open, close) in [("[", "]"), ("(", ")"), ("<", ">")] {
-            if text.filter({ String($0) == open }).count != text.filter({ String($0) == close }).count {
-                return false
+        if includingStrong {
+            // Recognize actual emphasis openers (next to a word), not arithmetic,
+            // identifiers, stray closing markers or punctuation such as :) / <.
+            let chars = Array(text)
+            var open: [String] = []
+            var i = 0
+            while i < chars.count {
+                guard "*_~".contains(chars[i]) else { i += 1; continue }
+                let start = i
+                while i < chars.count && chars[i] == chars[start] { i += 1 }
+                let marker = String(chars[start..<i])
+                let before = start > 0 ? chars[start - 1] : nil
+                let after = i < chars.count ? chars[i] : nil
+                if open.last == marker, before?.isWhitespace == false {
+                    open.removeLast()
+                } else if (before == nil || before?.isWhitespace == true),
+                          after?.isLetter == true || after?.isNumber == true {
+                    open.append(marker)
+                }
+            }
+            if !open.isEmpty { return false }
+        } else {
+            for marker in ["*", "_", "~~"] {
+                if (text.components(separatedBy: marker).count - 1) % 2 != 0 { return false }
+            }
+            // Preserve the legacy grouped stream's conservative markup policy.
+            for (open, close) in [("[", "]"), ("(", ")"), ("<", ">")] {
+                if text.filter({ String($0) == open }).count != text.filter({ String($0) == close }).count { return false }
             }
         }
-        // A link destination may start in the very next delta.
+        // Only real Markdown links gate parentheses. Ordinary prose punctuation
+        // and comparisons must not delay the first spoken sentence.
+        if let link = text.range(of: "](", options: .backwards),
+           !text[link.upperBound...].contains(")") { return false }
         return !text.hasSuffix("]")
     }
 }
@@ -126,7 +178,8 @@ struct TTSOutputMeter {
 
 /// Main-actor, single-use stream. Subscribe to events before enqueueing text.
 /// finish() closes input; playback drains asynchronously. cancel() is idempotent
-/// and stops the player immediately, including after finish() while draining.
+/// and requests player stop, including after finish() while draining. Hardware
+/// players may enqueue that stop on their audio queue rather than block the UI.
 @MainActor
 public final class TTSStreamHandle {
     public let id: String
