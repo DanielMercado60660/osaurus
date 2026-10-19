@@ -1623,6 +1623,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        TailscalePhoneAccessService.shared.stop()
         NSLog("Osaurus server app terminating")
         PluginRepositoryService.shared.stopBackgroundRefresh()
         ToastWindowController.shared.teardown()

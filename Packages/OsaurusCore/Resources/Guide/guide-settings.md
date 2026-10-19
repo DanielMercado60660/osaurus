@@ -220,3 +220,26 @@ Server → Memory Safety → **Keep Model in Memory** requests GPU residency whi
 In **Settings → Conversation → Appearance**, turn on **Show animated avatar** (off by default). This immediately shows a floating dinosaur companion and replaces empty-chat hero avatars with the animated character. Drag the floating companion to reposition it; its position survives relaunch. Click it to open the last focused agent chat. Turn the same toggle off to hide it and restore static avatars, including custom images. The character uses the agent’s mascot color (blue when none is selected).
 
 The companion breathes and blinks at rest, perks up while listening, and looks upward while waiting for the first visible reply. Speaking takes precedence over listening, then thinking; errors appear when no activity takes priority. Reduce Motion keeps a static pose with a level-driven mouth. Hidden or occluded surfaces stop animating and sampling. Audio-level lip sync awaits the T01 playback meter integration; until then playback reports Speaking with a closed mouth, without simulated audio levels.
+
+### Server → Overview → Phone access over Tailscale
+
+**Phone access** is off by default. Enable it to start the local HTTP server and
+its bundled `osaurus-ts` helper. **Sign in to Tailscale** opens the helper's
+interactive login URL; authenticate once, then scan the phone URL QR code with a
+phone on your tailnet. The node (`osaurus-<Mac hostname>`) persists across restarts.
+This path does not use `agent.osaurus.ai`, port forwarding, or a public listener.
+
+**Allowed Tailscale logins** is a comma-separated list of tailnet login names.
+Empty means the login that authenticated the node. These users receive owner
+access, including the built-in agent. **Save allowed logins** applies immediately
+by restarting the helper and rotating its launch secret. Disable **Phone access**
+to stop the helper; the tailnet node state is retained for next time.
+
+The phone page supports an agent picker, streaming chat, safe basic Markdown,
+and Hold to talk using the Mac's `/audio/transcriptions` endpoint (configure a
+speech model on the Mac first). There is currently no HTTP speech synthesis
+endpoint, so audio playback is not offered. HTTPS uses tailnet certificates;
+when unavailable, HTTP still travels inside Tailscale but browser microphone and
+PWA features require HTTPS. On iOS Safari, use Share → Add to Home Screen.
+A missing helper requires a build with Go (`make app`); no helper is downloaded at
+runtime. If a helper exits, the status shows the error; toggle off/on to retry.
