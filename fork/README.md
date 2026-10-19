@@ -37,12 +37,17 @@ See `fork/LOG.md` for the day-by-day log with measurements, and
 verified. Short version:
 
 - Builds green; all 12 deterministic eval suites meet their floors.
+- **Talk mode latency** (headless harness `fork/metrics/talk_bench.sh`: real
+  VAD → ASR → Qwen3.5-4B → PocketTTS, paced WAV input, null audio sink):
+  end of speech → first audio **1.14 s p50** (started at 3.58 s). Steps:
+  FluidAudio 0.15.4 (PocketTTS v2.1, ANE) → "Think before speaking" off by
+  default in talk mode → Smart Turn v3 semantic end-of-turn (MLX Swift).
 - Verified live: the phone page against the real server and a local model
-  (streamed chat), endpoint auth rejections, the DMG builds and codesign
-  verifies.
-- Not yet verified live: talk mode with real audio (needs PocketTTS model
-  download + a person or the headless harness `fork/metrics/talk_bench.sh`),
-  Tailscale login on a real tailnet, iPhone Safari.
+  (model picker + streamed chat), endpoint auth rejections, the DMG builds and
+  codesign verifies.
+- Not yet verified live: talk mode through real speakers/mic with a person
+  (echo cancellation, acoustic latency), Tailscale login on a real tailnet,
+  iPhone Safari, the Mac UI by a human.
 
 ## How it was built
 
