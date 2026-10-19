@@ -3455,23 +3455,62 @@ public actor ModelRuntime {
         // GDN/GLA linear-attention layers (qwen3_5, Bailing KDA) keep a
         // per-head (keyDim x valueDim) matmul state instead of mamba-style
         // SSM state; their config speaks `linear_*`, not `mamba_*`.
-        let linearVHeads = intValue(config["linear_num_value_heads"]) ?? 0
-        let linearKeyDim = intValue(config["linear_key_head_dim"]) ?? 0
-        let linearValueDim = intValue(config["linear_value_head_dim"]) ?? 0
+        let modelType = stringValue(config["model_type"])?.lowercased() ?? ""
+        let qwenHybrid = Self.isQwenHybridDecoder(modelType)
+        // Qwen35Configuration supplies these defaults; Qwen3Next requires
+        // the dimensions explicitly and rejects incomplete configurations.
+        let qwen35Defaults = qwenHybrid && modelType != "qwen3_next"
+        let linearVHeads = intValue(config["linear_num_value_heads"]) ?? (qwen35Defaults ? 64 : 0)
+        let linearKeyDim = intValue(config["linear_key_head_dim"]) ?? (qwen35Defaults ? 192 : 0)
+        let linearValueDim = intValue(config["linear_value_head_dim"]) ?? (qwen35Defaults ? 128 : 0)
         let linearStatePerLayer =
             Int64(max(0, linearVHeads))
             * Int64(max(0, linearKeyDim))
             * Int64(max(0, linearValueDim))
-        let ssmBytes =
+        var ssmBytes =
             Int64(max(0, mambaLayers))
             * max(mambaStatePerLayer, linearStatePerLayer)
             * Int64(dtypeBytes)
 
+        var companionBytes: Int64 = 0
+        if qwenHybrid {
+            // GDN recurrence is float32 even when weights/KV are BF16. Its
+            // convolution tail is stored in the activation dtype separately.
+            let keyHeads = max(0, intValue(config["linear_num_key_heads"]) ?? (qwen35Defaults ? 16 : 0))
+            let convRows = max(0, (intValue(config["linear_conv_kernel_dim"]) ?? 4) - 1)
+            let convWidth = 2 * keyHeads * linearKeyDim + linearVHeads * linearValueDim
+            ssmBytes = Int64(max(0, mambaLayers)) * (
+                linearStatePerLayer * 4 + Int64(convRows) * Int64(max(0, convWidth)) * Int64(dtypeBytes)
+            )
+            if modelType == "qwen4_exp" || modelType == "qwen4_exp_text" {
+                // QSA retains both raw index keys and derived pooled blocks.
+                // The pooled lane is omitted from SSD serialization but exists
+                // during execution; never price a child from disk size alone.
+                let indexDim = max(1, intValue(config["indexer_head_dim"]) ?? 128)
+                let ratio = max(1, intValue(config["indexer_compress_ratio"]) ?? 4)
+                companionBytes = Int64(layerMix.fullAttention) * Int64(indexDim)
+                    * Int64(maxPositions + maxPositions / ratio) * Int64(dtypeBytes)
+                // PLE keeps normalized gated hyper-state, not its embedding.
+                // Layer IDs are one-based; each layer owns one PLE regardless
+                // of repeated IDs. Token history is int32, separate from the
+                // activation-dtype dilated convolution tail.
+                let pleIDs = (config["ple_layer_ids"] as? [Int]) ?? [2]
+                let pleLayers = Set(pleIDs.filter { $0 > 0 && $0 <= hiddenLayers }).count
+                let pleWidth = max(0, intValue(config["hidden_size"]) ?? 0)
+                    * max(0, intValue(config["hc_count"]) ?? 4)
+                let ngram = max(1, intValue(config["ngram_size"]) ?? 3)
+                let pleRows = max(0, (intValue(config["ple_conv_kernel_size"]) ?? 4) - 1) * ngram
+                companionBytes += Int64(pleLayers) * (
+                    Int64(pleWidth) * Int64(pleRows) * Int64(dtypeBytes) + Int64(ngram - 1) * 4)
+            }
+        }
+
         // Leave room for masks, logits, transient activation slices, and
         // allocator slack without scaling by total routed-expert disk size.
         let floor: Int64 = 512 * 1024 * 1024
-        let slack = Int64(Double(kvBytes + ssmBytes) * 0.25)
-        return max(floor, kvBytes + ssmBytes + slack)
+        let stateBytes = kvBytes + ssmBytes + companionBytes
+        let slack = Int64(Double(stateBytes) * 0.25)
+        return max(floor, stateBytes + slack)
     }
 
     /// Per-class layer counts for cache pricing. `declaredPerLayer` records
@@ -3483,6 +3522,11 @@ public actor ModelRuntime {
         var linearState: Int = 0
         var slidingWindow: Int? = nil
         var declaredPerLayer: Bool = false
+    }
+
+    private static func isQwenHybridDecoder(_ modelType: String) -> Bool {
+        ["qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text",
+         "qwen3_next", "qwen4_exp", "qwen4_exp_text"].contains(modelType)
     }
 
     /// Resolve the decoder-shaped config for VLM wrappers that nest it under
@@ -3567,6 +3611,20 @@ public actor ModelRuntime {
         }
 
         let hiddenLayers = intValue(config["num_hidden_layers"]) ?? 0
+
+        // Qwen hybrid runtimes synthesize their layer list from the interval
+        // when layer_types is absent. Count the same owners as newCache(),
+        // including trailing recurrent layers. Do not apply this convention
+        // to unrelated architectures that happen to use an interval field.
+        if Self.isQwenHybridDecoder(modelType), hiddenLayers > 0 {
+            let interval = intValue(config["full_attention_interval"]) ?? 4
+            if interval > 0 {
+                mix.declaredPerLayer = true
+                mix.fullAttention = hiddenLayers / interval
+                mix.linearState = hiddenLayers - mix.fullAttention
+                return mix
+            }
+        }
 
         // Bailing hybrids (Ling 3.0 / Raptor) declare no per-layer list; the
         // rule lives in code: every `layer_group_size`-th layer is global
