@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from talk_latency import summarize
+from talk_latency import summarize, REQUIRED_FIELDS, measured
 
 HERE = Path(__file__).resolve().parent
 
@@ -74,7 +74,7 @@ def prepare_root(root, model_id, model_dir):
     write_json(voice / "tts.json", {"provider": "pocketTTS", "voice": "alba", "temperature": 0.7})
     write_json(voice / "vad.json", {"vadModeEnabled": False})
     write_json(voice / "talk.json", {"enabledAgentIds": ["00000000-0000-0000-0000-000000000001"],
-                                   "bargeInEnabled": True, "endOfTurnSilenceMs": 700})
+                                   "bargeInEnabled": True, "endOfTurnSilenceMs": 700, "thinkBeforeSpeaking": False})
     # Avoid colliding with an ordinary running Osaurus server. No server calls
     # are used for chat: the real ChatSession owns the in-process turn.
     with socket.socket() as sock:
@@ -115,8 +115,10 @@ def run_scenario(binary, root, wavs, model_id, model_dir, barge_ms=None):
     status = json.loads(sidecar.read_text()) if sidecar.exists() else {"error": "App did not write completion status"}
     stats = summarize(turns)
     complete = (error is None and process.returncode == 0 and status.get("error") is None
-                and len(turns) == len(wavs) and stats["firstTokenMs"]["missing"] == 0
-                and stats["firstAudioMs"]["missing"] == 0)
+                and len(turns) == len(wavs)
+                and all(stats[field]["missing"] == 0 for field in REQUIRED_FIELDS)
+                and not stats["ordering_errors"]
+                and all(row.get("reasoningDeltaCount") == 0 or measured(row, "firstReasoningMs") for row in turns))
     if barge_ms is not None:
         complete = complete and status.get("bargeInAttempted") is True and status.get("bargeInObserved") is True
     return {"status": "COMPLETE" if complete else "PARTIAL", "exit_code": process.returncode,
@@ -164,7 +166,8 @@ def main():
               "checkout_fluidaudio_pin": [p for p in pins if p["identity"].lower() == "fluidaudio"],
               "model": model_id, "model_dir": str(model_dir), "model_config_sha256": digest(model_dir / "config.json"),
               "generation_config": json.loads(generation.read_text()) if generation.exists() else None,
-              "generation_overrides": None, "speech_resources": resources,
+              "generation_overrides": {"talkThinkBeforeSpeaking": False,
+                  "enable_thinking": "false only when the bundle declares a thinking toggle; otherwise omitted"}, "speech_resources": resources,
               "tts": {"provider": "pocketTTS", "voice": "alba", "temperature": 0.7},
               "inputs": [{"question": q, "wav": str(w), "sha256": digest(w)} for q, w in zip(questions, wavs)],
               "baseline": baseline, "barge_in": barge}

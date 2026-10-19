@@ -38,6 +38,8 @@ struct TalkModeSettingsTab: View {
                         .settingsLandingAnchor("voice.talk.bargeIn")
                     Toggle("Echo Cancellation", isOn: $config.echoCancellationEnabled)
                         .settingsLandingAnchor("voice.talk.echo")
+                    TalkThinkingSetting(isOn: $config.thinkBeforeSpeaking)
+                        .settingsLandingAnchor("voice.talk.thinking")
                     Toggle("Show Captions", isOn: $config.showCaptions)
                         .settingsLandingAnchor("voice.talk.captions")
                     Text("Changes save automatically. Changing silence or echo cancellation stops an active conversation; toggle talk mode again to apply. If voice processing is unavailable, talk mode uses a higher speech threshold during playback and a 300 ms echo cooldown.")
@@ -128,5 +130,41 @@ struct TalkModeComposerControl: View {
         case .thinking: "Thinking"
         case .speaking: "Speaking"
         }
+    }
+}
+
+/// The most recently focused chat is the same surface used by the talk shortcut.
+private struct TalkThinkingSetting: View {
+    @Binding var isOn: Bool
+    @ObservedObject private var windows = ChatWindowManager.shared
+    @ObservedObject private var talk = TalkModeController.shared
+    private var windowID: UUID? { talk.isActive ? talk.windowID : windows.lastFocusedWindowId }
+    var body: some View {
+        VStack(alignment: .leading) {
+            Toggle("Think before speaking", isOn: $isOn)
+            if let id = windowID, let state = windows.windowState(id: id) {
+                TalkThinkingCaption(session: state.session)
+            } else {
+                Text("Off skips thinking when the model supports it. On uses the model's default. Open a chat to inspect its model.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct TalkThinkingCaption: View {
+    @ObservedObject var session: ChatSession
+    @State private var capability: LocalReasoningCapability.Capability?
+    var body: some View {
+        Text(TalkThinkingPolicy.caption(supportsThinking: capability?.supportsThinking,
+                                       toggleable: capability?.isToggleableThinking == true))
+            .font(.caption).foregroundStyle(.secondary)
+            .task(id: session.selectedModel) {
+                capability = nil
+                guard session.selectedModelIsLocal, let id = session.selectedModel else { return }
+                let resolved = await LocalReasoningCapability.resolveForDispatch(modelId: id)
+                guard !Task.isCancelled, session.selectedModel == id else { return }
+                capability = resolved
+            }
     }
 }

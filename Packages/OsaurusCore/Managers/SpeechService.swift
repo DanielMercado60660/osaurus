@@ -1807,6 +1807,7 @@ private actor TranscriptionWorker {
                 case .speculate:
                     recognizeTalk(utterance, segment: segment, kind: .speculative)
                 case .finalize(let reuse):
+                    continuation?.yield(.talk(.endOfTurnDecided(segment: segment, at: now)))
                     if active {
                         active = false
                         continuation?.yield(.speechActivity(false))
@@ -1850,22 +1851,22 @@ private actor TranscriptionWorker {
             // Even a cancelled preview must relinquish the shared ASR manager
             // before the next call. Cancellation suppresses its stale delivery.
             await previous?.value
-            if Task.isCancelled { await self?.finishTalkRecognition(id, result: nil); return }
+            if Task.isCancelled { await self?.finishTalkRecognition(id, result: nil, at: ProcessInfo.processInfo.systemUptime); return }
             do {
                 var decoder = await SpeechDecoderStateFactory.make(for: asrManager.manager)
                 let result = try await asrManager.manager.transcribe(samples, decoderState: &decoder)
-                await self?.finishTalkRecognition(id, result: Task.isCancelled ? nil : .text(result.text))
+                await self?.finishTalkRecognition(id, result: Task.isCancelled ? nil : .text(result.text), at: ProcessInfo.processInfo.systemUptime)
             } catch {
-                await self?.finishTalkRecognition(id, result: Task.isCancelled ? nil : .failure(error.localizedDescription))
+                await self?.finishTalkRecognition(id, result: Task.isCancelled ? nil : .failure(error.localizedDescription), at: ProcessInfo.processInfo.systemUptime)
             }
         }
         recognitionTasks[id] = recognitionTask
     }
 
-    private func finishTalkRecognition(_ id: UUID, result: TalkRecognitionLedger.Result?) {
+    private func finishTalkRecognition(_ id: UUID, result: TalkRecognitionLedger.Result?, at: TimeInterval) {
         recognitionTasks[id] = nil
         if recognitionID == id { recognitionTask = nil }
-        if let result, let delivery = recognitionLedger.complete(id, result: result) {
+        if let result, let delivery = recognitionLedger.complete(id, result: result, at: at) {
             deliverTalkRecognition(delivery)
         }
     }
@@ -1878,7 +1879,7 @@ private actor TranscriptionWorker {
                 message: "Transcription failed: \(message)")))
         case .text(let text):
             continuation?.yield(delivery.final ? .final(text) : .partial(text))
-            continuation?.yield(.talk(delivery.final ? .final(segment: delivery.segment, text: text)
+            continuation?.yield(.talk(delivery.final ? .final(segment: delivery.segment, text: text, at: delivery.completedAt)
                                      : .partial(segment: delivery.segment, text: text)))
         }
     }

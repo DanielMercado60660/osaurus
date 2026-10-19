@@ -193,10 +193,85 @@ enum TalkModeReducer {
 public struct TalkTurnLatency: Codable, Equatable, Sendable {
     public let epoch: UInt64
     public let speechEnd: TimeInterval
+    public var endOfTurnDecidedMs: Double?
+    public var asrFinalMs: Double?
+    public var sendIssuedMs: Double?
+    public var firstStreamDeltaMs: Double?
+    public var firstReasoningMs: Double?
+    public var firstVisibleTokenMs: Double?
+    public var firstSentenceReleasedMs: Double?
+    /// Sum of reasoning phases: first reasoning delta until visible content or turn termination.
+    public var reasoningDurationMs: Double?
+    public var reasoningDeltaCount: Int? = 0
+    // Monotonic phase start, excluded from exported measurements.
+    private var reasoningStart: TimeInterval?
+    /// Compatibility alias for firstVisibleTokenMs (raw content, before display pacing).
     public var firstTokenMs: Double?
     public var firstAudioMs: Double?
     /// Null-sink confirmed barge-in to synchronous stop; hardware async stop is unmeasured.
     public var bargeInToStopMs: Double?
+
+    init(epoch: UInt64, speechEnd: TimeInterval) {
+        self.epoch = epoch; self.speechEnd = speechEnd
+    }
+    private enum CodingKeys: String, CodingKey {
+        case epoch, speechEnd, endOfTurnDecidedMs, asrFinalMs, sendIssuedMs
+        case firstStreamDeltaMs, firstReasoningMs, firstVisibleTokenMs, firstTokenMs
+        case firstSentenceReleasedMs, firstAudioMs, bargeInToStopMs
+        case reasoningDurationMs, reasoningDeltaCount
+    }
+    mutating func observe(_ event: TalkStreamTimingEvent) {
+        switch event {
+        case .delta(let at):
+            if firstStreamDeltaMs == nil { firstStreamDeltaMs = (at - speechEnd) * 1000 }
+        case .reasoning(let at):
+            if firstReasoningMs == nil { firstReasoningMs = (at - speechEnd) * 1000 }
+            if reasoningStart == nil { reasoningStart = at }
+            reasoningDeltaCount = (reasoningDeltaCount ?? 0) + 1
+        }
+    }
+    mutating func visible(at: TimeInterval) {
+        if firstVisibleTokenMs == nil {
+            firstVisibleTokenMs = (at - speechEnd) * 1000
+            firstTokenMs = firstVisibleTokenMs
+        }
+        finishReasoning(at: at)
+    }
+    mutating func finishReasoning(at: TimeInterval) {
+        if let start = reasoningStart {
+            reasoningDurationMs = (reasoningDurationMs ?? 0) + max(0, at - start) * 1000
+            reasoningStart = nil
+        } else if reasoningDeltaCount == 0 {
+            reasoningDurationMs = 0
+        }
+    }
+}
+
+/// Observation only; never changes channel routing or text.
+enum TalkStreamTimingEvent {
+    case delta(at: TimeInterval)
+    case reasoning(at: TimeInterval)
+}
+
+/// Segment timestamps survive speculative result delivery and are pruned when
+/// the reducer accepts a new utterance. All required segments must be measured.
+struct TalkCaptureTiming {
+    var endpoints: [Int: TimeInterval] = [:]
+    var finals: [Int: TimeInterval] = [:]
+    mutating func retain(_ segments: [Int]) {
+        endpoints = endpoints.filter { segments.contains($0.key) }
+        finals = finals.filter { segments.contains($0.key) }
+    }
+    func apply(segments: [Int], to turn: inout TalkTurnLatency) {
+        if !segments.isEmpty, segments.allSatisfy({ endpoints[$0] != nil }),
+           let end = segments.compactMap({ endpoints[$0] }).max() {
+            turn.endOfTurnDecidedMs = (end - turn.speechEnd) * 1000
+        }
+        if !segments.isEmpty, segments.allSatisfy({ finals[$0] != nil }),
+           let final = segments.compactMap({ finals[$0] }).max() {
+            turn.asrFinalMs = (final - turn.speechEnd) * 1000
+        }
+    }
 }
 
 public struct TalkLatencyHistory: Sendable {
@@ -211,7 +286,7 @@ public struct TalkLatencyHistory: Sendable {
         body(&turns[index])
     }
     public func percentiles(_ keyPath: KeyPath<TalkTurnLatency, Double?>) -> (p50: Double, p90: Double)? {
-        let values = turns.compactMap { $0[keyPath: keyPath] }.sorted()
+        let values = turns.compactMap { $0[keyPath: keyPath] }.filter { $0.isFinite && $0 >= 0 }.sorted()
         guard !values.isEmpty else { return nil }
         return (values[max(0, Int(ceil(Double(values.count) * 0.5)) - 1)],
                 values[max(0, Int(ceil(Double(values.count) * 0.9)) - 1)])
@@ -238,9 +313,10 @@ final class TalkSpeechGate: @unchecked Sendable {
 }
 
 enum TalkCaptureEvent: Sendable {
+    case endOfTurnDecided(segment: Int, at: TimeInterval)
     case activity(segment: Int, active: Bool, at: TimeInterval)
     case partial(segment: Int, text: String)
-    case final(segment: Int, text: String)
+    case final(segment: Int, text: String, at: TimeInterval?)
     case failed(String)
     case recognitionFailed(segment: Int, message: String)
     case aecChanged(Bool)
@@ -303,8 +379,8 @@ struct TalkRestartRequest {
 struct TalkRecognitionLedger {
     enum Kind { case preview, speculative, final }
     enum Result: Equatable { case text(String), failure(String) }
-    struct Delivery: Equatable { let segment: Int; let final: Bool; let result: Result }
-    private struct Entry { let segment: Int; var kind: Kind; var result: Result? }
+    struct Delivery: Equatable { let segment: Int; let final: Bool; let result: Result; var completedAt: TimeInterval? = nil }
+    private struct Entry { let segment: Int; var kind: Kind; var result: Result?; var completedAt: TimeInterval? }
     private var entries: [UUID: Entry] = [:]
     private(set) var speculativeID: UUID?
     mutating func begin(segment: Int, kind: Kind) -> UUID {
@@ -329,18 +405,19 @@ struct TalkRecognitionLedger {
         speculativeID = nil
         entry.kind = .final
         entries[id] = entry
-        if let result = entry.result { return complete(id, result: result) }
+        if let result = entry.result { return complete(id, result: result, at: entry.completedAt) }
         return nil
     }
-    mutating func complete(_ id: UUID, result: Result) -> Delivery? {
+    mutating func complete(_ id: UUID, result: Result, at: TimeInterval? = nil) -> Delivery? {
         guard var entry = entries[id] else { return nil }
         if entry.kind == .speculative {
             entry.result = result
+            entry.completedAt = at
             entries[id] = entry
             return nil
         }
         entries[id] = nil
-        return Delivery(segment: entry.segment, final: entry.kind == .final, result: result)
+        return Delivery(segment: entry.segment, final: entry.kind == .final, result: result, completedAt: at)
     }
 }
 

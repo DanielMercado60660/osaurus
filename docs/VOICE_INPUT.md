@@ -560,15 +560,43 @@ was running before talk mode. Continuous Chat Voice is stopped, not auto-resumed
 
 Settings save automatically. Changing **End of Turn Silence** or **Echo
 Cancellation** stops capture and takes effect on the next start. Disabling the
-active agent stops talk mode. Other talk options apply immediately.
+active agent stops talk mode. **Think before speaking** (Voice → Talk Mode,
+Off by default) applies to the next spoken send. Off uses the chat composer's
+canonical `disableThinking` / `enable_thinking` mechanism only for a model with
+a bundle-declared thinking toggle; On omits the override and uses the bundle
+default. Talk turns do not inherit or modify the composer's saved reasoning
+choices. Models without a toggle retain their native behavior; the caption
+reports always-reasoning/non-reasoning, or unknown capability for remote models.
+Other talk options apply immediately.
 
-Telemetry uses `ai.osaurus` / `talk.mode`: end-of-speech to first raw visible token,
-end-of-speech to first completed playback buffer, and (for the headless null sink)
-confirmed barge-in to synchronous stop. Hardware player stops are asynchronous;
-`bargeInToStopMs` remains unmeasured there. Speech end uses the capture timestamp
-of the last VAD-positive frame, not the first subsequent silent chunk. `TalkModeController.shared.latency` retains the last 50 turns and exposes
-p50/p90 for `firstTokenMs`, `firstAudioMs`, and `bargeInToStopMs`; `turns` is Codable
-for metrics exporters. Missing samples remain nil (never converted to zero).
+`TalkModeController.shared.latency` retains the last 50 sent turns as Codable
+records. Stage fields are milliseconds from `speechEnd`, the monotonic capture
+timestamp of the last VAD-positive frame:
+
+- `endOfTurnDecidedMs`: the capture worker commits its silence endpoint.
+- `asrFinalMs`: final ASR computation completes, even when speculative delivery
+  is withheld until the endpoint. Speculation starts at 275 ms silence on the
+  next capture/VAD iteration; actual execution can wait for serialized ASR.
+  Resumed speech cancels speculation and invalidates its timestamp. For joined
+  segments, ASR/endpoint timings use the latest completion across all segments.
+- `sendIssuedMs`: immediately before `ChatSession.send`.
+- `firstStreamDeltaMs`: first stream event, including reasoning, tools, or metadata.
+- `firstReasoningMs`: first nonempty reasoning delta; absent for direct answers.
+- `firstVisibleTokenMs`: first nonempty raw content delta before display pacing;
+  `firstTokenMs` is the retained compatibility alias, not a screen-paint measure.
+- `firstSentenceReleasedMs`: first chunk queued to TTS (sentence, timeout clause,
+  or final fragment); synthesis and playback have not necessarily started.
+- `firstAudioMs`: first **completed** playback buffer, not acoustic onset.
+
+`reasoningDeltaCount` counts nonempty reasoning deltas across tool continuations.
+`reasoningDurationMs` sums phases from first reasoning delta to next nonempty
+visible content or send completion/cancellation; it includes intervening waits,
+not just decoder compute. A completed turn without reasoning has count/duration
+zero and no `firstReasoningMs`. Missing measurements remain nil, including new
+fields in older exports. `bargeInToStopMs` measures confirmed interruption to
+synchronous null-sink stop; asynchronous hardware stops remain unmeasured.
+`ai.osaurus` / `talk.mode` logs retain first-audio and null-sink stop timings.
+
 These are software timings, not acoustic latency proof. The <1.2 s p50 first-audio
 and <150 ms interruption targets require live measurement on the selected model,
 provider, and devices. ASR finalization, VAD windowing, model warm-up, and the
@@ -579,6 +607,11 @@ popover. **Copy latency JSON** exports the in-memory samples to the clipboard.
 Save them to a file and run `python3 fork/metrics/talk_latency.py turns.json` for
 p50/p90 with measured/missing denominators. This exporter applies the same
 nearest-rank percentile rule as the app and does not grade acoustic targets.
+The T06 benchmark summary includes every stage, reasoning duration/count,
+ordering errors, and measured ASR-before-endpoint counts. It marks runs PARTIAL
+when required stages are missing or ordered inconsistently; reasoning onset is
+only required when reasoning deltas were observed. Slow ASR may legitimately
+finish after the endpoint, so that ordering is reported rather than fabricated.
 
 A capture segment reaching two minutes finalizes and capture continues into a new
 segment. Text from segments that finish ASR late is retained in order if the user

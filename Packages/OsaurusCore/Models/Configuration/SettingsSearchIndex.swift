@@ -631,6 +631,15 @@ public enum SettingsSearchIndex {
             disambiguation: "Hands-free conversation; separate from Chat Voice, Transcription, and Wake Word."
         ),
         .init(
+            id: "voice.talk.thinking",
+            tab: .voice,
+            section: "Talk Mode",
+            title: "Think before speaking",
+            keywords: ["reasoning", "thinking", "latency", "talk mode"],
+            subTab: "Talk Mode",
+            disambiguation: "Talk-only reasoning preference; separate from the chat composer's Thinking control."
+        ),
+        .init(
             id: "voice.talk.captions",
             tab: .voice,
             section: "Talk Mode",

@@ -353,6 +353,7 @@ If a helper exits, the status shows the error; toggle off/on to retry.
 - **Allow Barge-In** — sustained speech interrupts generation and playback (160 ms minimum).
 - **Echo Cancellation** — request Apple voice processing on the shared microphone/playback engine.
   If unavailable, playback uses a higher VAD threshold and a 300 ms echo cooldown.
+- **Think before speaking** — off by default. On spoken turns, Off explicitly disables thinking only when the active local model's bundle/template declares a thinking toggle. On leaves reasoning to the bundle default (it does not force reasoning on). Models without a toggle keep their native behavior; the caption reports “This model always reasons” or “This model doesn't reason”. Unknown/remote capabilities preserve the model default. Changes save automatically and apply to the next spoken turn. The chat composer's saved Thinking/effort choices are unchanged and do not override this talk-only preference.
 - **Show Captions** — display the user's partial transcript beside the chat talk button.
 
 Settings save automatically. Silence and echo changes stop active talk mode; start it again

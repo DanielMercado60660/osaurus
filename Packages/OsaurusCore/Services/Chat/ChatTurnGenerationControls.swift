@@ -70,6 +70,22 @@ struct ChatTurnGenerationControls: Sendable, Equatable {
         return capture(activeModelOptions: merged)
     }
 
+    /// Reuse the composer's canonical option, without mutating its saved choice.
+    static func captureForTalk(activeModelOptions: [String: ModelOptionValue],
+                               thinkBeforeSpeaking: Bool, toggleable: Bool) -> ChatTurnGenerationControls {
+        var options = activeModelOptions
+        options.removeValue(forKey: "disableThinking")
+        options.removeValue(forKey: "reasoningEffort")
+        if let enabled = TalkThinkingPolicy.enableThinking(
+            thinkBeforeSpeaking: thinkBeforeSpeaking, toggleable: toggleable) {
+            options["disableThinking"] = .bool(!enabled)
+        }
+        // An explicit empty dictionary prevents ChatEngine's UI-agent fallback
+        // from reloading the composer's persisted Thinking/effort options.
+        return ChatTurnGenerationControls(
+            modelOptions: options, enableThinking: options["disableThinking"]?.boolValue.map { !$0 })
+    }
+
     func apply(to request: inout ChatCompletionRequest) {
         request.modelOptions = modelOptions
         request.enable_thinking = enableThinking
