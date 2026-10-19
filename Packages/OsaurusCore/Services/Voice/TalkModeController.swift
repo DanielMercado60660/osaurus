@@ -18,6 +18,15 @@ public final class TalkModeController: ObservableObject {
     public private(set) var windowID: UUID?
     public var isActive: Bool { state != .off || isStarting || isStopping }
 
+    // Presentation observation does not control capture, synthesis or playback.
+    let avatarEvents = PassthroughSubject<(UUID, AvatarTalkEvent), Never>()
+    private var restartWithoutWindow = false
+    private(set) var usesCompanion = false
+
+    private func publishAvatar(_ event: AvatarTalkEvent) {
+        if let agentID { avatarEvents.send((agentID, event)) }
+    }
+
     private let logger = Logger(subsystem: "ai.osaurus", category: "talk.mode")
     private var snapshot = TalkModeSnapshot()
     private var session: ChatSession?
@@ -52,18 +61,24 @@ public final class TalkModeController: ObservableObject {
     }
 
     func initialize() {
-        TalkModeHotKey.shared.register { TalkModeController.shared.toggle() }
+        TalkModeHotKey.shared.register {
+            if AvatarOverlayWindowService.shared.isVisible {
+                AvatarOverlayWindowService.shared.toggleTalk()
+            } else { TalkModeController.shared.toggle() }
+        }
         initializeBenchmark()
     }
 
     func owns(_ session: ChatSession) -> Bool { isActive && self.session === session }
 
-    func toggle(agentID requestedAgentID: UUID? = nil, windowID requestedWindowID: UUID? = nil) {
+    func toggle(agentID requestedAgentID: UUID? = nil, windowID requestedWindowID: UUID? = nil, withoutWindow: Bool = false) {
         if isStopping {
+            restartWithoutWindow = withoutWindow
             restartRequest.queue(agentID: requestedAgentID ?? agentID, windowID: requestedWindowID ?? windowID)
             return
         }
         if isActive { stop(); return }
+        lastError = nil
         let manager = ChatWindowManager.shared
         let focused = (requestedWindowID ?? manager.lastFocusedWindowId).flatMap { manager.windowState(id: $0) }
         let id = requestedAgentID ?? focused?.activeAgent.id ?? AgentManager.shared.activeAgent.id
@@ -82,22 +97,25 @@ public final class TalkModeController: ObservableObject {
             ToastManager.shared.error("Microphone is in use", message: lastError!)
             return
         }
+        let revealWindow = !withoutWindow && !TalkBenchmarkConfiguration.inputRequested
         let target: UUID
         if let focused, focused.activeAgent.id == id {
             target = focused.windowId
-            if !TalkBenchmarkConfiguration.inputRequested { manager.showWindow(id: target) }
+            if revealWindow { manager.showWindow(id: target) }
         } else if let existing = manager.findWindows(byAgentId: id).first {
             target = existing.id
-            if !TalkBenchmarkConfiguration.inputRequested { manager.showWindow(id: target) }
+            if revealWindow { manager.showWindow(id: target) }
         } else {
-            target = manager.createWindow(agentId: id, showImmediately: !TalkBenchmarkConfiguration.inputRequested)
+            target = manager.createWindow(agentId: id, showImmediately: revealWindow)
         }
         guard let session = manager.windowState(id: target)?.session else { return }
         guard session.isAvailableForDispatchReattachment else {
-            ToastManager.shared.error("Chat is busy", message: "Stop the current turn before starting talk mode.")
+            lastError = "Stop the current turn before starting talk mode."
+            ToastManager.shared.error("Chat is busy", message: lastError!)
             return
         }
         self.session = session
+        usesCompanion = withoutWindow
         agentID = id
         windowID = target
         lastError = nil
@@ -136,6 +154,12 @@ public final class TalkModeController: ObservableObject {
         }
     }
 
+    /// Dismissing or switching the companion also cancels a queued headless restart.
+    func dismissCompanion() {
+        if restartWithoutWindow { restartRequest = TalkRestartRequest() }
+        if usesCompanion { stop() }
+    }
+
     public func stop() {
         guard isActive, !isStopping else { return }
         isStopping = true
@@ -166,7 +190,7 @@ public final class TalkModeController: ObservableObject {
             }
             self.isStopping = false
             if let request = self.restartRequest.take() {
-                self.toggle(agentID: request.agentID, windowID: request.windowID)
+                self.toggle(agentID: request.agentID, windowID: request.windowID, withoutWindow: self.restartWithoutWindow)
             }
         }
     }
@@ -200,6 +224,7 @@ public final class TalkModeController: ObservableObject {
         case .final(let segment, let text): dispatch(.final(segment: segment, text: text))
         case .failed(let message): fail(message)
         case .recognitionFailed(let segment, let message):
+            publishAvatar(.reaction(.oops))
             lastError = message
             ToastManager.shared.error("Could not transcribe this turn", message: message)
             dispatch(.recognitionFailed(segment: segment))
@@ -215,6 +240,10 @@ public final class TalkModeController: ObservableObject {
 
     private func dispatch(_ event: TalkModeEvent) {
         let (next, effects) = TalkModeReducer.reduce(snapshot, event, config: configuration)
+        if effects.contains(where: { if case .cancelReply = $0 { true } else { false } }),
+           replyEpoch != nil, next.state == .userSpeaking || next.state == .endOfTurn {
+            publishAvatar(.reaction(.surprised))
+        }
         snapshot = next
         if state != next.state { state = next.state }
         if caption != next.caption { caption = next.caption }
@@ -228,6 +257,7 @@ public final class TalkModeController: ObservableObject {
     }
 
     private func cancelReply() {
+        publishAvatar(.cleared)
         let start = ProcessInfo.processInfo.systemUptime
         let epoch = replyEpoch
         chatSubscription = nil
@@ -253,6 +283,7 @@ public final class TalkModeController: ObservableObject {
         guard let session, let duplex else { return }
         guard session.isAvailableForDispatchReattachment else { recoverTurn("The previous chat turn is still settling. Please try again."); return }
         replyEpoch = epoch
+        publishAvatar(.began(epoch))
         latency.begin(epoch: epoch, speechEnd: speechEnd)
         let handle = TTSService.shared.beginTalkStream(id: "talk-\(epoch)", duplex: duplex,
             voiceOverride: agentID.flatMap { AgentManager.shared.agent(for: $0)?.ttsVoice })
@@ -267,6 +298,8 @@ public final class TalkModeController: ObservableObject {
                 self.logger.info("epoch=\(epoch) end_of_speech_to_first_audio_ms=\(ms)")
                 self.dispatch(.firstAudio(epoch: epoch))
             case .finished:
+                self.publishAvatar(.finished(epoch))
+                self.publishAvatar(.reaction(.happy))
                 self.replyEpoch = nil
                 self.chatSubscription = nil
                 self.dispatch(.replyFinished(epoch: epoch, at: now))
@@ -278,6 +311,7 @@ public final class TalkModeController: ObservableObject {
             guard let self, self.replyEpoch == epoch, self.snapshot.epoch == epoch else { return }
             switch event {
             case .delta(_, let text):
+                self.publishAvatar(.delta(text, epoch))
                 if self.latency.turns.last?.firstTokenMs == nil {
                     let ms = (ProcessInfo.processInfo.systemUptime - speechEnd) * 1000
                     self.latency.update(epoch: epoch) { $0.firstTokenMs = ms }
@@ -381,6 +415,7 @@ public final class TalkModeController: ObservableObject {
     }
 
     private func recoverTurn(_ message: String?) {
+        publishAvatar(.reaction(.oops))
         if let message {
             lastError = message
             ToastManager.shared.error("Talk reply interrupted", message: message)
@@ -389,6 +424,7 @@ public final class TalkModeController: ObservableObject {
     }
 
     private func fail(_ message: String) {
+        publishAvatar(.reaction(.oops))
         lastError = message
         logger.error("talk failed: \(message, privacy: .public)")
         ToastManager.shared.error("Talk mode stopped", message: message)
