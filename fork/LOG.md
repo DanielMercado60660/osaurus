@@ -173,3 +173,15 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   Remaining: 700 ms silence window (→ T17 Smart Turn v3 in MLX Swift) and
   ≈0.4–0.65 s prompt prefill of the agent system prompt (left as is — trimming
   it would change agent behavior).
+- **T17 Smart Turn v3** (MLX Swift port; GPU golden PASS, logit |diff| ≤ 7e-6;
+  warm inference 4–11 ms, cold 2.2 s → warmed at talk start). Semantics check:
+  complete utterances p≈0.98–0.99, trailing-off ones p≈0.29–0.35.
+- **Talk benchmark with Smart Turn** (Qwen3.5-4B, FluidAudio 0.15.4, Think
+  before speaking Off; p50 from end of speech; p90 = cold first turn):
+  end-of-turn **382 ms** (was 708; 1 check/turn, p≈0.99), ASR final 357,
+  send 391, first visible token 940, **first audio 1140 ms** (target ≤1200 ✓).
+  Barge-in scenario: first audio 1071, interrupt→stop 0.04 ms (software).
+  Progression today, first audio p50: 3579 → 2696 (FluidAudio 0.15.4) →
+  1534 (reasoning off) → **1140 ms** (Smart Turn).
+  Still software-only timing with a null sink — acoustic latency on real
+  speakers/mic is unverified.

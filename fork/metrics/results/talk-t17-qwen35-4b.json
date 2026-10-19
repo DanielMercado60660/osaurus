@@ -1,0 +1,418 @@
+{
+  "label": "t17-qwen35-4b",
+  "date": "2026-10-19T08:09:58.468541+00:00",
+  "status": "COMPLETE",
+  "evidence": "Software latency through real models and paced null audio. Not acoustic or release proof.",
+  "checkout_sha": "a40fd89a11a348241b4634e8c31236a2e6d61715",
+  "app_source_sha": "unverified: set APP_SOURCE_SHA to the app's actual build SHA",
+  "app": "/Users/danielmercado/osaurus-fork/build/DerivedData/Build/Products/Release/osaurus.app",
+  "app_executable_sha256": "7ddc6ca9a1cb3586bdd9d76e5bb35db566be6af0c8627ac1776705bfa132df30",
+  "checkout_vmlx_pin": [
+    {
+      "identity": "vmlx-swift",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/osaurus-ai/vmlx-swift",
+      "state": {
+        "revision": "f9f5e0aa9e042f006ee6a948f28d835b3e065ea6"
+      }
+    }
+  ],
+  "checkout_fluidaudio_pin": [
+    {
+      "identity": "fluidaudio",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/FluidInference/FluidAudio.git",
+      "state": {
+        "revision": "b9d43724cbdb5a980e441fd54180964e94d470f7",
+        "version": "0.15.4"
+      }
+    }
+  ],
+  "model": "mlx-community/Qwen3.5-4B-4bit",
+  "model_dir": "/Users/danielmercado/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+  "model_config_sha256": "f3efc81b2ea8d96a45301037d3ccccbcccdef44a961845c87f286aaddbc6eaaa",
+  "generation_config": null,
+  "generation_overrides": {
+    "talkThinkBeforeSpeaking": false,
+    "enable_thinking": "false only when the bundle declares a thinking toggle; otherwise omitted"
+  },
+  "speech_resources": {
+    "Parakeet TDT v3 (FluidInference/parakeet-tdt-0.6b-v3-coreml), Voice \u2192 Voice Setup": [
+      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/Preprocessor.mlmodelc",
+      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/Encoder.mlmodelc",
+      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/Decoder.mlmodelc",
+      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/JointDecisionv3.mlmodelc",
+      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/parakeet_vocab.json"
+    ],
+    "Silero VAD (FluidInference/silero-vad-coreml), loaded with Voice Setup": [
+      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/silero-vad/silero-vad-unified-256ms-v6.0.0.mlmodelc"
+    ],
+    "PocketTTS v2.1 English (FluidInference/pocket-tts-coreml), Voice \u2192 Text To Speech": [
+      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/cond_prefill.mlmodelc",
+      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/flowlm_step.mlmodelc",
+      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/flow_decoder_fused.mlmodelc",
+      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/mimi_decoder.mlmodelc",
+      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/constants_bin"
+    ]
+  },
+  "tts": {
+    "provider": "pocketTTS",
+    "voice": "alba",
+    "temperature": 0.7
+  },
+  "inputs": [
+    {
+      "question": "Why is the sky blue? Explain it in five sentences.",
+      "wav": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t17-qwen35-4b-2egfuwhh/input-0.wav",
+      "sha256": "95b1cdd9b69d4dbc8136caa119e7cd513a3884e7e272ed2104b2f883e9879396"
+    },
+    {
+      "question": "What's the capital of France?",
+      "wav": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t17-qwen35-4b-2egfuwhh/input-1.wav",
+      "sha256": "9dc2cceffeda8c5d165c83e635c026467c275b847a98028e992f7f06868eec77"
+    },
+    {
+      "question": "What is seven plus eight?",
+      "wav": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t17-qwen35-4b-2egfuwhh/input-2.wav",
+      "sha256": "aee5b403f09da642065504a143ead4057117d89bfe59ac035c30457b190cfbe3"
+    },
+    {
+      "question": "Which is the largest ocean on Earth?",
+      "wav": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t17-qwen35-4b-2egfuwhh/input-3.wav",
+      "sha256": "c8df3df46be4c91dc05602ee4989df048e84944c9c3ca4912558081252ef28ed"
+    }
+  ],
+  "baseline": {
+    "status": "COMPLETE",
+    "exit_code": 0,
+    "watchdog_error": null,
+    "completion": {
+      "bargeInAttempted": false,
+      "bargeInObserved": false,
+      "error": null,
+      "evidence": "Real VAD/ASR/chat/TTS; paced null sink. First audio is buffer completion; barge-in is confirmed interruption to sink stop. No acoustic proof.",
+      "inputCount": 4
+    },
+    "summary": {
+      "evidence": "software timings only; acoustic latency unverified",
+      "turns": 4,
+      "endOfTurnDecidedMs": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 381.8901249906048,
+        "p90": 393.1894999695942
+      },
+      "asrFinalMs": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 356.5925832372159,
+        "p90": 378.0104999896139
+      },
+      "sendIssuedMs": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 391.08216657768935,
+        "p90": 411.0739999450743
+      },
+      "firstStreamDeltaMs": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 555.4310833103955,
+        "p90": 2139.3955833045766
+      },
+      "firstReasoningMs": {
+        "samples": 0,
+        "missing": 4,
+        "p50": null,
+        "p90": null
+      },
+      "firstVisibleTokenMs": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 939.9756665807217,
+        "p90": 7269.317708327435
+      },
+      "firstSentenceReleasedMs": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 1047.2208333667368,
+        "p90": 7434.292666614056
+      },
+      "firstAudioMs": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 1139.6741250064224,
+        "p90": 7828.754666610621
+      },
+      "reasoningDurationMs": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 0,
+        "p90": 0
+      },
+      "reasoningDeltaCount": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 0,
+        "p90": 0
+      },
+      "firstTokenMs": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 939.9756665807217,
+        "p90": 7269.317708327435
+      },
+      "bargeInToStopMs": {
+        "samples": 0,
+        "missing": 4,
+        "p50": null,
+        "p90": null
+      },
+      "smartTurnChecks": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 1,
+        "p90": 1
+      },
+      "smartTurnProbability": {
+        "samples": 4,
+        "missing": 0,
+        "p50": 0.98850983,
+        "p90": 0.9897894
+      },
+      "endOfTurnReason": {
+        "smartTurn": 4,
+        "silence": 0,
+        "missing": 0
+      },
+      "ordering_errors": [],
+      "asr_before_endpoint": {
+        "samples": 4,
+        "before": 3,
+        "missing": 0
+      }
+    },
+    "turns": [
+      {
+        "asrFinalMs": 378.0104999896139,
+        "endOfTurnDecidedMs": 338.59979163389653,
+        "endOfTurnReason": "smartTurn",
+        "epoch": 2,
+        "firstAudioMs": 7828.754666610621,
+        "firstSentenceReleasedMs": 7434.292666614056,
+        "firstStreamDeltaMs": 2139.3955833045766,
+        "firstTokenMs": 7269.317708327435,
+        "firstVisibleTokenMs": 7269.317708327435,
+        "reasoningDeltaCount": 0,
+        "reasoningDurationMs": 0,
+        "sendIssuedMs": 381.16308336611837,
+        "smartTurnChecks": 1,
+        "smartTurnProbability": 0.976267,
+        "speechEnd": 1014929.4608066251
+      },
+      {
+        "asrFinalMs": 360.84637499880046,
+        "endOfTurnDecidedMs": 393.1894999695942,
+        "endOfTurnReason": "smartTurn",
+        "epoch": 3,
+        "firstAudioMs": 1139.6741250064224,
+        "firstSentenceReleasedMs": 1047.2208333667368,
+        "firstStreamDeltaMs": 564.9649166734889,
+        "firstTokenMs": 1044.3367082625628,
+        "firstVisibleTokenMs": 1044.3367082625628,
+        "reasoningDeltaCount": 0,
+        "reasoningDurationMs": 0,
+        "sendIssuedMs": 411.0739999450743,
+        "smartTurnChecks": 1,
+        "smartTurnProbability": 0.9891979,
+        "speechEnd": 1014966.8608457501
+      },
+      {
+        "asrFinalMs": 347.912083263509,
+        "endOfTurnDecidedMs": 381.8901249906048,
+        "endOfTurnReason": "smartTurn",
+        "epoch": 4,
+        "firstAudioMs": 1038.8541666325182,
+        "firstSentenceReleasedMs": 930.8644583215937,
+        "firstStreamDeltaMs": 548.6175416735932,
+        "firstTokenMs": 912.0519165880978,
+        "firstVisibleTokenMs": 912.0519165880978,
+        "reasoningDeltaCount": 0,
+        "reasoningDurationMs": 0,
+        "sendIssuedMs": 391.08216657768935,
+        "smartTurnChecks": 1,
+        "smartTurnProbability": 0.98850983,
+        "speechEnd": 1014972.1192180001
+      },
+      {
+        "asrFinalMs": 356.5925832372159,
+        "endOfTurnDecidedMs": 389.28245822899044,
+        "endOfTurnReason": "smartTurn",
+        "epoch": 5,
+        "firstAudioMs": 1180.683416663669,
+        "firstSentenceReleasedMs": 1092.9595415946096,
+        "firstStreamDeltaMs": 555.4310833103955,
+        "firstTokenMs": 939.9756665807217,
+        "firstVisibleTokenMs": 939.9756665807217,
+        "reasoningDeltaCount": 0,
+        "reasoningDurationMs": 0,
+        "sendIssuedMs": 399.9487916007638,
+        "smartTurnChecks": 1,
+        "smartTurnProbability": 0.9897894,
+        "speechEnd": 1014977.8999655001
+      }
+    ],
+    "evidence_root": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t17-qwen35-4b-2egfuwhh/baseline",
+    "barge_in_after_ms": null
+  },
+  "barge_in": {
+    "status": "COMPLETE",
+    "exit_code": 0,
+    "watchdog_error": null,
+    "completion": {
+      "bargeInAttempted": true,
+      "bargeInObserved": true,
+      "error": null,
+      "evidence": "Real VAD/ASR/chat/TTS; paced null sink. First audio is buffer completion; barge-in is confirmed interruption to sink stop. No acoustic proof.",
+      "inputCount": 2
+    },
+    "summary": {
+      "evidence": "software timings only; acoustic latency unverified",
+      "turns": 2,
+      "endOfTurnDecidedMs": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 319.22375003341585,
+        "p90": 327.7858333894983
+      },
+      "asrFinalMs": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 342.6106250844896,
+        "p90": 363.0341667449102
+      },
+      "sendIssuedMs": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 361.29845841787755,
+        "p90": 374.868749990128
+      },
+      "firstStreamDeltaMs": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 512.4977499945089,
+        "p90": 1469.7423334000632
+      },
+      "firstReasoningMs": {
+        "samples": 0,
+        "missing": 2,
+        "p50": null,
+        "p90": null
+      },
+      "firstVisibleTokenMs": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 974.8361667152494,
+        "p90": 6617.836208315566
+      },
+      "firstSentenceReleasedMs": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 977.782208356075,
+        "p90": 6757.24345841445
+      },
+      "firstAudioMs": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 1071.153666707687,
+        "p90": 7057.188541744836
+      },
+      "reasoningDurationMs": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 0,
+        "p90": 0
+      },
+      "reasoningDeltaCount": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 0,
+        "p90": 0
+      },
+      "firstTokenMs": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 974.8361667152494,
+        "p90": 6617.836208315566
+      },
+      "bargeInToStopMs": {
+        "samples": 1,
+        "missing": 1,
+        "p50": 0.041958410292863846,
+        "p90": 0.041958410292863846
+      },
+      "smartTurnChecks": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 1,
+        "p90": 1
+      },
+      "smartTurnProbability": {
+        "samples": 2,
+        "missing": 0,
+        "p50": 0.96018267,
+        "p90": 0.9891979
+      },
+      "endOfTurnReason": {
+        "smartTurn": 2,
+        "silence": 0,
+        "missing": 0
+      },
+      "ordering_errors": [],
+      "asr_before_endpoint": {
+        "samples": 2,
+        "before": 0,
+        "missing": 0
+      }
+    },
+    "turns": [
+      {
+        "asrFinalMs": 363.0341667449102,
+        "bargeInToStopMs": 0.041958410292863846,
+        "endOfTurnDecidedMs": 327.7858333894983,
+        "endOfTurnReason": "smartTurn",
+        "epoch": 2,
+        "firstAudioMs": 7057.188541744836,
+        "firstSentenceReleasedMs": 6757.24345841445,
+        "firstStreamDeltaMs": 1469.7423334000632,
+        "firstTokenMs": 6617.836208315566,
+        "firstVisibleTokenMs": 6617.836208315566,
+        "reasoningDeltaCount": 0,
+        "reasoningDurationMs": 0,
+        "sendIssuedMs": 374.868749990128,
+        "smartTurnChecks": 1,
+        "smartTurnProbability": 0.96018267,
+        "speechEnd": 1015036.7632004167
+      },
+      {
+        "asrFinalMs": 342.6106250844896,
+        "endOfTurnDecidedMs": 319.22375003341585,
+        "endOfTurnReason": "smartTurn",
+        "epoch": 3,
+        "firstAudioMs": 1071.153666707687,
+        "firstSentenceReleasedMs": 977.782208356075,
+        "firstStreamDeltaMs": 512.4977499945089,
+        "firstTokenMs": 974.8361667152494,
+        "firstVisibleTokenMs": 974.8361667152494,
+        "reasoningDeltaCount": 0,
+        "reasoningDurationMs": 0,
+        "sendIssuedMs": 361.29845841787755,
+        "smartTurnChecks": 1,
+        "smartTurnProbability": 0.9891979,
+        "speechEnd": 1015046.3626025
+      }
+    ],
+    "evidence_root": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t17-qwen35-4b-2egfuwhh/barge-in",
+    "barge_in_after_ms": 800
+  }
+}
