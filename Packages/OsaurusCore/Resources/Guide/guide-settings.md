@@ -267,10 +267,16 @@ hold the phone-access state directory lock at a time.
 
 The phone page supports an agent picker, streaming chat, safe basic Markdown,
 and Hold to talk using the Mac's `/audio/transcriptions` endpoint (configure a
-speech model on the Mac first). There is currently no HTTP speech synthesis
-endpoint, so audio playback is not offered. HTTPS uses tailnet certificates;
-when unavailable, HTTP still travels inside Tailscale but browser microphone and
-PWA features require HTTPS. On iOS Safari, use Share → Add to Home Screen.
+speech model on the Mac first). **Speaker on** speaks replies through
+`/v1/audio/speech` using the Mac's enabled **Voice → Text To Speech** provider;
+download/load PocketTTS or configure the OpenAI-compatible provider first.
+**Talk mode** loops through Listening, Thinking and Speaking. Tap **End talk /
+Interrupt** or **Stop** to stop audio and the current turn. It listens again only
+after playback finishes; voice barge-in is not supported. These phone controls
+are session-only and start off after reload. The first tap unlocks iOS audio.
+HTTPS uses tailnet certificates; when unavailable, HTTP still travels inside
+Tailscale but browser microphone and PWA features require HTTPS. The page explains
+this limitation. On iOS Safari, use Share → Add to Home Screen.
 A missing helper requires a build with Go (`make app`); no helper is downloaded at
 runtime. Team-signed apps require a valid helper signature from the same Team ID.
 Ad-hoc/development apps require the SHA-256 compiled into Swift by `make ts-helper`

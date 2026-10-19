@@ -703,3 +703,77 @@ The balance is cached for 30 seconds and always reflects a value fetched from th
 4. **GPU Acceleration**: MLX uses Apple Silicon unified memory for GPU-accelerated inference.
 
 5. **Context Length**: Each model has its own architectural context limit (the engine respects per-layer sliding windows, e.g. Gemma-4's 1024-position windows, automatically). Osaurus does not expose a user-facing global KV cache cap any more — vmlx-swift picks model-aware defaults per release.
+
+## Speech synthesis — `POST /v1/audio/speech`
+
+Also available at `/audio/speech`. Uses the Mac's enabled **Voice → Text To
+Speech** provider: on-device PocketTTS or the configured OpenAI-compatible TTS
+server. It synthesizes only; it does not start, stop, or take over Mac speaker
+playback. Download/load PocketTTS in the Mac UI first; API requests never trigger
+model downloads.
+
+The existing API authentication gate applies. This endpoint additionally requires
+owner trust: a trusted local connection, master access key, or validated Phone
+Access helper connection. Agent-scoped/workspace keys cannot synthesize speech.
+The Phone Access helper continues to enforce its login/device policy.
+
+```bash
+curl --fail-with-body http://127.0.0.1:1337/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"configured","input":"Hello from your Mac.","voice":"configured","response_format":"pcm"}' \
+  --output reply.pcm
+```
+
+Remote API callers must also supply their master `Authorization: Bearer …` header.
+Phone browser code contains no key; the existing authenticated proxy supplies its
+launch capability.
+
+| Field | Contract |
+| --- | --- |
+| `model` | Required. `configured` selects the current Mac TTS model. Otherwise must match `pocket-tts` or the configured remote model. Does not switch providers. |
+| `input` | Required, nonblank, at most 4096 Unicode characters. Entire JSON body at most 32 KiB (within the server's existing overall request-body limit). |
+| `voice` | Required. `configured` selects the provider's saved voice. Otherwise a PocketTTS catalog voice or a remote provider voice. Model/voice identifiers are limited to 256 characters. |
+| `response_format` | `wav` (default) or `pcm`. Both contain mono 24 kHz signed 16-bit little-endian samples. |
+| `speed` | Optional number from 0.25 to 4. Remote synthesis uses the saved speed when omitted. PocketTTS supports only omitted/1; other values return 400 rather than being silently ignored. |
+
+Audio streams with HTTP chunked transfer. WAV sends a 44-byte PCM header with
+RIFF and data lengths of `0xffffffff` (unknown streaming length); consume to HTTP
+EOF, and do not allocate from those lengths. PCM has no header. PocketTTS and
+upstream PCM/WAV frames are forwarded incrementally; the existing compatible
+client buffers compressed-only upstream responses for decoding, so those providers
+do not offer first-frame streaming. The writer awaits each flush. Only one API
+synthesis is admitted at a time; concurrent requests return 429 `tts_busy`.
+
+Before audio starts, errors use `{"error":{"code":"…","message":"…"}}`:
+400 for invalid fields/unsupported local speed, 413 at the HTTP body limit, 503 `tts_not_configured` or
+`tts_model_not_ready`, and 502 for synthesis/no-audio failures. Authentication and
+owner-scope errors retain the server's existing 401/403 format. Once audio has
+started, a failure closes the stream without its terminating HTTP chunk, so clients
+must treat truncated transport as failure. Disconnecting cancels that request's
+synthesis task.
+
+### Phone speaker and Talk mode
+
+Open `/phone/` using the phone URL from **Server → Overview → Phone access over
+Tailscale**, on a phone already connected to the permitted tailnet. **Speaker on**
+speaks visible assistant content through this endpoint, using one gesture-unlocked
+Web Audio context. The first complete sentence is released immediately; a first
+clause of at least 40 characters can release after 500 ms. Further sentences and
+the final tail are queued in order. Speech controls are session-only actions;
+reloading starts with speaker and Talk mode off.
+
+**Talk mode** turns on the speaker and loops through Listening → Thinking →
+Speaking → Listening. Browser energy VAD requires 300 ms of speech and 700 ms of
+silence; clips are bounded to 30 seconds. Capture begins at detected onset. It is
+a half-duplex loop: the microphone is released while transcribing/responding to
+avoid recording the speaker. Tap **End talk / Interrupt** or **Stop** to cancel
+capture/transcription, abort the connection-bound agent run, abort speech fetches,
+and discard queued playback. Voice barge-in during playback is not supported.
+A hidden page stops Talk mode; it does not restart without another tap.
+
+Microphone input requires HTTPS, Safari microphone permission, MediaRecorder,
+and a configured transcription model on the Mac. The HTTP fallback displays the
+HTTPS requirement. Denied permission, device loss, suspended audio, transcription
+errors and speech errors end the loop with a visible message. **Hold to talk**
+continues to produce a reviewable transcript for manual Send. No CDN, inline
+script, browser speech synthesis, or CSP relaxation is required.

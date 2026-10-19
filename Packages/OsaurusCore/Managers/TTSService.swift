@@ -332,6 +332,73 @@ public final class TTSService: ObservableObject {
 
     // MARK: - Public API
 
+    /// API synthesis only: no stop(), player, audio graph, or playback state.
+    /// Snapshot configuration for the entire request; never implicitly download.
+    private var apiSynthesisActive = false
+
+    func synthesizeForAPI(
+        _ request: AudioSpeechRequest,
+        emit: @escaping @Sendable ([Float]) async throws -> Void
+    ) async throws {
+        let config = TTSConfigurationStore.load()
+        guard config.enabled else {
+            throw AudioSpeechError(status: 503, code: "tts_not_configured",
+                message: "Enable Text To Speech on the Mac before requesting speech.")
+        }
+        let model = config.provider == .pocketTTS ? "pocket-tts" : config.remoteModel
+        guard request.model == "configured" || request.model == model else {
+            throw AudioSpeechError.invalid("model must be configured or the active TTS model: \(model).")
+        }
+        let voice = request.voice == "configured"
+            ? (config.provider == .pocketTTS ? config.voice : config.remoteVoice) : request.voice
+        guard !apiSynthesisActive else {
+            throw AudioSpeechError(status: 429, code: "tts_busy", message: "Another speech request is active. Retry when it finishes.")
+        }
+        apiSynthesisActive = true
+        defer { apiSynthesisActive = false }
+        try Task.checkCancellation()
+        switch config.provider {
+        case .pocketTTS:
+            guard let manager else {
+                throw AudioSpeechError(status: 503, code: "tts_model_not_ready",
+                    message: "Download and load PocketTTS in Voice → Text To Speech on the Mac.")
+            }
+            guard PocketTTSVoiceCatalog.availableVoices.contains(voice) else {
+                throw AudioSpeechError.invalid("Unknown PocketTTS voice. Use configured or a voice from the Mac's voice picker.")
+            }
+            guard request.speed == nil || request.speed == 1 else {
+                throw AudioSpeechError.invalid("PocketTTS supports speed 1 only; other speeds require the OpenAI-compatible provider.")
+            }
+            // Same bounded utterances and streaming manager used by desktop TTS.
+            for text in TTSTextChunker.split(request.input) {
+                try Task.checkCancellation()
+                let frames = try await manager.synthesizeStreaming(
+                    text: text, voice: voice, temperature: Float(config.temperature))
+                for try await frame in frames {
+                    try Task.checkCancellation()
+                    try await emit(frame.samples)
+                }
+            }
+        case .openAICompatible:
+            guard !config.remoteEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !model.isEmpty, !voice.isEmpty else {
+                throw AudioSpeechError(status: 503, code: "tts_not_configured",
+                    message: "Configure the TTS endpoint, model and voice on the Mac.")
+            }
+            let apiKey = await Task.detached(priority: .userInitiated) {
+                TTSRemoteAPIKeyStore.loadSync()
+            }.value
+            try Task.checkCancellation()
+            let client = OpenAICompatibleTTSClient(
+                endpoint: config.remoteEndpoint, model: model, voice: voice,
+                speed: request.speed ?? config.remoteSpeed, apiKey: apiKey)
+            for try await samples in try client.synthesizeStreaming(text: request.input) {
+                try Task.checkCancellation()
+                try await emit(samples)
+            }
+        }
+    }
+
     /// Starts a single-use incremental utterance with a snapshot of the current
     /// provider configuration. Supersedes any existing playback. A missing local
     /// model is reported through the handle's failed event; no implicit download.
