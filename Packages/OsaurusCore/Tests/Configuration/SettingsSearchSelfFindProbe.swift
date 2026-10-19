@@ -59,6 +59,12 @@ struct SettingsSearchSelfFindProbe {
     @Test("controls are findable by the label they display")
     func controlsFindableByOnScreenLabel() {
         let labels: [(query: String, entryID: String)] = [
+            ("Enabled for Agent", "voice.talk.agents"),
+            ("End of Turn Silence", "voice.talk.silence"),
+            ("Allow Barge-In", "voice.talk.bargeIn"),
+            ("Echo Cancellation", "voice.talk.echo"),
+            ("Show Captions", "voice.talk.captions"),
+
             ("Show animated avatar", "settings.chat.animatedAvatar"),
             ("Border Color", "themes.borders.color"),
             ("Border Width", "themes.borders.width"),

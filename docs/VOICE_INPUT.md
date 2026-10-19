@@ -518,3 +518,57 @@ Your voice data never leaves your computer.
 - [README.md](../README.md) — Project overview
 - [FEATURES.md](FEATURES.md) — Complete feature inventory
 - [Agents](../README.md#agents) — Create custom AI assistants
+
+
+## Talk mode
+
+In **Voice → Talk Mode**, enable the desired agent. Configure a speech model and
+microphone in Voice Setup and a working provider in Text To Speech (load PocketTTS
+before starting). Click the waveform-circle button beside the chat microphone, or
+press **Control–Option–Command–T** globally. The shortcut uses the focused chat's
+agent, falling back to the active agent and creating/focusing its chat window.
+Press it again to stop. Closing/switching the owned chat also stops talk mode.
+
+Talk mode continuously captures speech, waits for 700 ms silence and a final
+transcript, and sends through the normal ChatSession lifecycle. Speech shorter
+than 300 ms and empty or filler-only “uh”/“um” turns are ignored. The first complete
+assistant sentence is released to TTS immediately; after 500 ms without a sentence,
+a clause of at least 40 characters ending in a comma/semicolon may be released.
+Later sentences retain the normal grouping policy. Raw visible content is observed
+before display pacing; reasoning remains on its existing separate channel.
+
+With **Allow Barge-In**, speech sustained for at least 160 ms during thinking or
+playback cancels both generation and queued audio. Capture stays running, preserving
+the onset for the new turn. Reply epochs and capture segment IDs reject stale
+callbacks. The indicator shows listening, hearing you, transcribing, thinking, or
+speaking; **Show Captions** controls the partial user transcript.
+
+**Echo Cancellation** requests Apple voice processing in a talk-only duplex
+AVAudioEngine: microphone capture and TTS render through the same graph. If setup
+fails or the option is off, the fallback raises VAD probability from 0.5 to 0.75
+during playback and ignores speech for 300 ms after playback ends. Headphones can
+help with difficult acoustic environments. Audio route changes stop talk mode with
+an error; restart it after selecting the desired device. System-audio input is not
+supported for talk mode. Dictation, wake-word, speaker-button, and tool speech keep
+their existing engines when talk mode is off. Wake-word listening resumes if it
+was running before talk mode. Continuous Chat Voice is stopped, not auto-resumed.
+
+Settings save automatically. Changing **End of Turn Silence** or **Echo
+Cancellation** stops capture and takes effect on the next start. Disabling the
+active agent stops talk mode. Other talk options apply immediately.
+
+Telemetry uses `ai.osaurus` / `talk.mode`: end-of-speech to first raw visible token,
+end-of-speech to first completed playback buffer, and confirmed barge-in to player
+stop. `TalkModeController.shared.latency` retains the last 50 turns and exposes
+p50/p90 for `firstTokenMs`, `firstAudioMs`, and `bargeInToStopMs`; `turns` is Codable
+for metrics exporters. Missing samples remain nil (never converted to zero).
+These are software timings, not acoustic latency proof. The <1.2 s p50 first-audio
+and <150 ms interruption targets require live measurement on the selected model,
+provider, and devices. ASR finalization, VAD windowing, model warm-up, and the
+configured silence interval all contribute to latency.
+
+In Debug builds, the gauge button beside the talk indicator opens the latency
+popover. **Copy latency JSON** exports the in-memory samples to the clipboard.
+Save them to a file and run `python3 fork/metrics/talk_latency.py turns.json` for
+p50/p90 with measured/missing denominators. This exporter applies the same
+nearest-rank percentile rule as the app and does not grade acoustic targets.

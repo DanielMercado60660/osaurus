@@ -237,3 +237,46 @@ struct TTSStreamTests {
         #expect(meter.update(rms: .nan) == 0)
     }
 }
+
+@Suite("TalkMode stream deadlines and shared player ownership")
+@MainActor
+struct TalkModeStreamLifecycleTests {
+    @Test func clauseReleasesAfterDeadlineWithoutAnotherDelta() async {
+        let player = ManualTTSPlayer()
+        var chunks: [String] = []
+        let handle = TTSStreamHandle(id: "clause", player: player, synthesize: { text, _ in
+            chunks.append(text)
+        }, releasePolicy: .conversational)
+        let clause = "This is a long enough clause to start talking now,"
+        handle.enqueue(text: clause + " followed by a tail")
+        #expect(chunks.isEmpty)
+        for _ in 0..<150 {
+            if !chunks.isEmpty { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(chunks == [clause])
+        handle.finish()
+        for _ in 0..<50 {
+            if chunks.count == 2 { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(chunks == [clause, "followed by a tail"])
+    }
+
+    @Test func releasingTerminalHandleDoesNotStopReusedDuplexPlayer() async {
+        let player = ManualTTSPlayer()
+        var handle: TTSStreamHandle? = TTSStreamHandle(id: "done", player: player, synthesize: { _, _ in })
+        var finished = false
+        let subscription = handle!.events.sink { if case .finished = $0 { finished = true } }
+        handle?.finish()
+        for _ in 0..<50 {
+            if finished { break }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(finished)
+        let stops = player.stopCount
+        handle = nil
+        #expect(player.stopCount == stops)
+        withExtendedLifetime(subscription) {}
+    }
+}

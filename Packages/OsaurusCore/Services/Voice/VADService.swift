@@ -95,6 +95,7 @@ public final class VADService: ObservableObject {
 
     /// Start VAD listening
     public func start() async throws {
+        guard !TalkModeController.shared.isActive else { return }
         guard state != .listening else {
             print("[VADService] Already listening, skipping start")
             return
@@ -116,6 +117,7 @@ public final class VADService: ObservableObject {
 
         // brief delay of 2s to avoid GPU contention during app startup/prefix-caching
         try? await Task.sleep(nanoseconds: 2_000_000_000)
+        guard !TalkModeController.shared.isActive else { return }
         guard !Task.isCancelled else { return }
 
         state = .starting
@@ -136,6 +138,7 @@ public final class VADService: ObservableObject {
             }
         }
 
+        guard !TalkModeController.shared.isActive else { state = .idle; return }
         // Start streaming transcription with keep-alive enabled
         do {
             // Enable keep-alive to prevent audio engine teardown during handoffs
@@ -387,6 +390,7 @@ public final class VADService: ObservableObject {
 
         // Wait for audio system to settle before restarting
         try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+        guard !TalkModeController.shared.isActive else { return }
 
         // Clear any stale transcription before resuming
         speechService.clearTranscription()

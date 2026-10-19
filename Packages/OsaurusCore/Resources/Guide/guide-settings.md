@@ -220,3 +220,18 @@ Server → Memory Safety → **Keep Model in Memory** requests GPU residency whi
 In **Settings → Conversation → Appearance**, turn on **Show animated avatar** (off by default). This immediately shows a floating dinosaur companion and replaces empty-chat hero avatars with the animated character. Drag the floating companion to reposition it; its position survives relaunch. Click it to open the last focused agent chat. Turn the same toggle off to hide it and restore static avatars, including custom images. The character uses the agent’s mascot color (blue when none is selected).
 
 The companion breathes and blinks at rest, perks up while listening, and looks upward while waiting for the first visible reply. Speaking takes precedence over listening, then thinking; errors appear when no activity takes priority. Reduce Motion keeps a static pose with a level-driven mouth. Hidden or occluded surfaces stop animating and sampling. Audio-level lip sync awaits the T01 playback meter integration; until then playback reports Speaking with a closed mouth, without simulated audio levels.
+
+
+### Voice → Talk Mode
+
+- **Enabled for Agent** — opt individual agents into hands-free conversation.
+- **End of Turn Silence** — silence before sending a final transcript (700 ms by default).
+- **Allow Barge-In** — sustained speech interrupts generation and playback (160 ms minimum).
+- **Echo Cancellation** — request Apple voice processing on the shared microphone/playback engine.
+  If unavailable, playback uses a higher VAD threshold and a 300 ms echo cooldown.
+- **Show Captions** — display the user's partial transcript beside the chat talk button.
+
+Settings save automatically. Silence and echo changes stop active talk mode; start it again
+for the new capture settings. Toggle with the waveform circle beside the chat mic or
+**Control–Option–Command–T**. Talk mode pauses Wake Word and supersedes continuous Chat Voice.
+It requires a microphone input, downloaded speech model, and configured Text To Speech engine.

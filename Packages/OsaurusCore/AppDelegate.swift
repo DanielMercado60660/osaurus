@@ -1101,6 +1101,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     private func initializeTranscriptionModeService() {
         // Initialize the transcription mode service and register hotkey if enabled
         TranscriptionModeService.shared.initialize()
+        TalkModeController.shared.initialize()
         log.debug("Transcription mode service initialized")
     }
 

@@ -1023,7 +1023,7 @@ struct FloatingInputCard: View {
                     }
                 }
 
-                if speechService.isRecording {
+                if speechService.isRecording && !TalkModeController.shared.isActive {
                     if voiceInputState == .idle {
                         voiceInputState = .recording
                         lastVoiceActivityTime = Date()
@@ -1040,6 +1040,12 @@ struct FloatingInputCard: View {
                 if enabled {
                     folderState.clearFolder()
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .talkModeWillStart)) { _ in
+                isContinuousVoiceMode = false
+                voiceInputState = .idle
+                showVoiceOverlay = false
+                cancelLiveVoicePreencodeSession(removeRegistryEntry: true)
             }
             .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
                 // Start voice input when triggered by VAD - enable continuous mode
@@ -1086,7 +1092,7 @@ struct FloatingInputCard: View {
                 }
 
                 // When AI finishes responding and we're in continuous voice mode, restart voice input
-                if wasStreaming && !nowStreaming && isContinuousVoiceMode {
+                if wasStreaming && !nowStreaming && isContinuousVoiceMode && !TalkModeController.shared.isActive {
                     print("[FloatingInputCard] AI response finished in continuous mode - restarting voice")
                     // Reset silence timeout for the new turn
                     lastVoiceActivityTime = Date()
@@ -1102,7 +1108,7 @@ struct FloatingInputCard: View {
             }
             .onDisappear {
                 // Stop any active voice recording, but check if we should keep continuous mode
-                if isVoiceActive {
+                if isVoiceActive && !TalkModeController.shared.isActive {
                     print("[FloatingInputCard] onDisappear: Stopping active voice recording")
                     // Don't use cancelVoiceInput() here as it forces continuous mode off.
                     // Instead, just stop recording but preserve the mode.
@@ -1403,6 +1409,7 @@ private struct VoiceDebugObservers: ViewModifier {
 extension FloatingInputCard {
 
     fileprivate func startVoiceInput() {
+        guard !TalkModeController.shared.isActive else { return }
         // Branch on TCC up front:
         //   .denied / .restricted → themed "enable in Settings" alert
         //   .notDetermined        → trigger the system permission prompt
@@ -5886,6 +5893,7 @@ extension FloatingInputCard {
 
             HStack(spacing: 8) {
                 contextBudgetRing
+                TalkModeComposerControl(agentID: agentId, windowID: windowId)
                 FloatingVoiceButton(
                     voiceInputEnabled: voiceConfig.voiceInputEnabled,
                     isStreaming: isStreaming,
@@ -9202,11 +9210,12 @@ private struct FloatingVoiceButton: View {
     let isStreaming: Bool
     let startVoiceInput: () -> Void
 
+    @ObservedObject private var talk = TalkModeController.shared
     @ObservedObject private var speechService = SpeechService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
 
     private var isVoiceConfigured: Bool {
-        voiceInputEnabled && speechModelManager.downloadedModelsCount > 0
+        voiceInputEnabled && !talk.isActive && speechModelManager.downloadedModelsCount > 0
     }
 
     var body: some View {
@@ -9281,6 +9290,7 @@ private struct VoiceStateSyncObservers: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onChange(of: speechService.isRecording) { _, isRecording in
+                guard !TalkModeController.shared.isActive else { return }
                 print(
                     "[FloatingInputCard] isRecording changed to: \(isRecording). voiceInputState: \(voiceInputState), showVoiceOverlay: \(showVoiceOverlay)"
                 )
