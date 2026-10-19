@@ -185,3 +185,7 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   1534 (reasoning off) → **1140 ms** (Smart Turn).
   Still software-only timing with a null sink — acoustic latency on real
   speakers/mic is unverified.
+- Post-merge check on fork/main 54958d635: 12/12 deterministic eval suites
+  PASS (incl. RAMAdmission with T12's 16 GB voice cases, ComputerUse,
+  ComputerUseLoop). Fresh DMG `build/fork/Osaurus-fork-54958d635.dmg`
+  (99.2 MB, ad-hoc signed, not notarized).
