@@ -2905,6 +2905,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public let expected: [SubagentAdmissionEvaluator.Observation]
         }
         public let ramAdmission: RAMAdmission?
+        /// Model-free <=16 GiB Talk advisory using production byte arithmetic.
+        public struct TalkMemory: Sendable, Codable {
+            public let facts: TalkMemoryBudget.Facts
+            public let expected: TalkMemoryBudget.Decision
+        }
+        public let talkMemory: TalkMemory?
 
         /// `workspace` lane: a scripted roster (local + teammates' shared
         /// agents with presence) and the launcher's two spawn policies drive
@@ -2961,7 +2967,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         }
 
         /// `"scripted"` | `"spawn"` | `"spawn_residency"` | `"image"` |
-        /// `"computer_use"` | `"browser_use"` | `"ram_admission"`. Selects the lane.
+        /// `"computer_use"` | `"browser_use"` | `"ram_admission"` | `"talk_memory"`. Selects the lane.
         public let lane: String
 
         // --- scripted lane inputs ---
@@ -3183,6 +3189,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public init(
             lane: String,
             ramAdmission: RAMAdmission? = nil,
+            talkMemory: TalkMemory? = nil,
             workspaceDelegation: WorkspaceDelegation? = nil,
             needsHandoff: Bool? = nil,
             decision: String? = nil,
@@ -3249,6 +3256,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         ) {
             self.lane = lane
             self.ramAdmission = ramAdmission
+            self.talkMemory = talkMemory
             self.workspaceDelegation = workspaceDelegation
             self.needsHandoff = needsHandoff
             self.decision = decision

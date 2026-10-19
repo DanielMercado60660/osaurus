@@ -131,6 +131,16 @@ public final class TalkModeController: ObservableObject {
         startup = Task { [weak self] in
             guard let self else { return }
             do {
+                if ProcessInfo.processInfo.physicalMemory <= 16 << 30 {
+                    let components = await SpeechModelMemory.talkComponents()
+                    let decision = await ModelRuntime.shared.talkMemoryDecision(
+                        modelName: session.selectedModel, local: session.selectedModelIsLocal, auxiliary: components)
+                    try Task.checkCancellation()
+                    if let message = decision.message {
+                        self.logger.info("talk memory advisory=\(decision.outcome, privacy: .public) projected=\(decision.projectedBytes ?? 0)")
+                        ToastManager.shared.info("Talk mode memory", message: message)
+                    }
+                }
                 await VADService.shared.pause()
                 _ = await SpeechService.shared.stopStreamingTranscription(force: true)
                 try Task.checkCancellation()

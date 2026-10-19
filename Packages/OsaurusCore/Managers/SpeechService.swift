@@ -662,6 +662,7 @@ public final class SpeechService: ObservableObject {
 
     // MARK: - Private Properties
 
+    private var modelLoadGeneration = UUID()
     private var sendableAsrManager: SendableAsrManager?
     private nonisolated(unsafe) var vadManager: VadManager?
 
@@ -757,6 +758,8 @@ public final class SpeechService: ObservableObject {
 
         print("[SpeechService] Starting to load model: \(modelId)")
         isLoadingModel = true
+        let generation = UUID()
+        modelLoadGeneration = generation
         lastError = nil
 
         sendableAsrManager = nil
@@ -772,14 +775,22 @@ public final class SpeechService: ObservableObject {
             let models = try await Task.detached(priority: .userInitiated) {
                 return try await AsrModels.downloadAndLoad(version: version)
             }.value
+            try Task.checkCancellation()
+            guard generation == modelLoadGeneration else { throw CancellationError() }
 
             let manager = AsrManager(config: .default)
             try await manager.loadModels(models)
-            self.sendableAsrManager = SendableAsrManager(manager)
+            try Task.checkCancellation()
+            guard generation == modelLoadGeneration else { throw CancellationError() }
+            await SpeechModelMemory.track(manager, kind: .stt, roots: SpeechModelMemory.sttRoots(modelID: modelId))
 
             let vad = try await VadManager(
                 config: VadConfig(defaultThreshold: SpeechConfigurationStore.load().sensitivity.vadThreshold)
             )
+            await SpeechModelMemory.track(vad, kind: .vad, roots: SpeechModelMemory.vadRoots)
+            try Task.checkCancellation()
+            guard generation == modelLoadGeneration else { throw CancellationError() }
+            self.sendableAsrManager = SendableAsrManager(manager)
             self.vadManager = vad
 
             print("[SpeechService] Model loaded successfully")
@@ -787,6 +798,8 @@ public final class SpeechService: ObservableObject {
             loadedModelId = modelId
             isLoadingModel = false
         } catch {
+            sendableAsrManager = nil
+            vadManager = nil
             print("[SpeechService] Failed to load model: \(error)")
             lastError = error.localizedDescription
             isModelLoaded = false
@@ -798,6 +811,7 @@ public final class SpeechService: ObservableObject {
 
     /// Unload the current model
     public func unloadModel() {
+        modelLoadGeneration = UUID()
         sendableAsrManager = nil
         vadManager = nil
         isModelLoaded = false

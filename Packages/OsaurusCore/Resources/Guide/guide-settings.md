@@ -302,3 +302,21 @@ Settings save automatically. Silence and echo changes stop active talk mode; sta
 for the new capture settings. Toggle with the waveform circle beside the chat mic or
 **Control–Option–Command–T**. Talk mode pauses Wake Word and supersedes continuous Chat Voice.
 It requires a microphone input, downloaded speech model, and configured Text To Speech engine.
+
+
+On Macs with **16 GB of RAM or less**, starting Talk checks the combined chat,
+speech, and loaded privacy-model estimate against the existing comfortable model
+budget (85% of the GPU working-set budget) and measured host headroom with the
+existing 3 GiB reserve. If tight, **Talk mode memory** recommends a smaller chat
+model and explains when room is also needed for the privacy filter. This is an
+advisory, not a new load limit: Talk continues and the existing runtime limits
+still apply. No privacy setting, model default, or memory limit changes automatically.
+Larger Macs do not show this advisory. An unavailable estimate is reported explicitly.
+
+Speech estimates use the loaded compiled artifacts' on-disk bytes × 1.25 for
+runtime state, not a measured physical footprint. STT, VAD, and local TTS remain
+counted while their engines are cached, including after Talk or voice input stops;
+only releasing the actual engines removes them. Remote TTS adds no local model,
+but switching to it does not unload an already cached local engine. Available host
+memory already reflects resident engines, the embedder, image workloads, and the
+sandbox VM, so those resident bytes are not subtracted from that sample again.

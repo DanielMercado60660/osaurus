@@ -52,6 +52,16 @@ extension EvalRunner {
         }
 
         switch exp.lane {
+        case "talk_memory":
+            guard let fixture = exp.talkMemory else {
+                return .terminal(id: testCase.id, label: label, domain: testCase.domain,
+                    outcome: .errored, notes: ["talk_memory needs facts and an expected decision"], modelId: modelId)
+            }
+            let observed = TalkMemoryBudget.assess(fixture.facts)
+            return EvalCaseReport(id: testCase.id, label: label, domain: testCase.domain,
+                query: testCase.query, outcome: observed == fixture.expected ? .passed : .failed,
+                notes: ["Injected host/artifact estimates; production Talk advisory. No physical RAM or audio proof.",
+                        "observed=\(observed) expected=\(fixture.expected)"], modelId: modelId, latencyMs: 0)
         case "ram_admission":
             guard let fixture = exp.ramAdmission,
                 !fixture.scenario.steps.isEmpty,
@@ -118,7 +128,7 @@ extension EvalRunner {
                 outcome: .errored,
                 notes: [
                     "unknown subagent lane '\(exp.lane)' "
-                        + "(expected scripted|workspace|ram_admission|spawn|spawn_residency|image|"
+                        + "(expected scripted|workspace|ram_admission|talk_memory|spawn|spawn_residency|image|"
                         + "computer_use|browser_use)"
                 ],
                 modelId: modelId

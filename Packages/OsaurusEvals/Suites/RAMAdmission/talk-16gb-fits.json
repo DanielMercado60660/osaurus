@@ -1,0 +1,48 @@
+{
+  "id": "ram_admission.talk-16gb-fits",
+  "domain": "subagent",
+  "label": "talk-16gb-fits",
+  "query": "Project the selected chat and actual speech/utility residents at Talk startup.",
+  "notes": "Scripted byte estimates, not a physical 16 GB or acoustic claim.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "talk_memory",
+      "talkMemory": {
+        "facts": {
+          "physicalBytes": 17179869184,
+          "comfortableBytes": 9735259204,
+          "availableBytes": 11811160064,
+          "reserveBytes": 3221225472,
+          "components": [
+            {
+              "role": "chat",
+              "estimatedBytes": 4617089843,
+              "resident": false
+            },
+            {
+              "role": "stt",
+              "estimatedBytes": 805306368,
+              "resident": false
+            },
+            {
+              "role": "tts",
+              "estimatedBytes": 939524096,
+              "resident": false
+            },
+            {
+              "role": "vad",
+              "estimatedBytes": 13421772,
+              "resident": false
+            }
+          ]
+        },
+        "expected": {
+          "outcome": "comfortable",
+          "message": null,
+          "projectedBytes": 6375342079
+        }
+      }
+    }
+  }
+}
