@@ -15,7 +15,7 @@ import PackageDescription
 let package = Package(name: "TalkModeProof", platforms: [.macOS(.v15)], targets: [
 .target(name: "OsaurusCore"), .testTarget(name: "OsaurusCoreTests", dependencies: ["OsaurusCore"])])
 ''')
-for f in ['Services/Voice/TalkModeReducer.swift','Models/Voice/TalkModeConfiguration.swift','Services/Voice/TTSStream.swift','Services/Voice/TalkAudioEngine.swift','Services/Voice/MarkdownStripper.swift','Utils/StreamingDeltaProcessor.swift','Models/Configuration/SettingsSearchIndex.swift','Models/Configuration/ManagementTab.swift','AppleApps/AppleApp.swift','Services/SearchService.swift']:
+for f in ['Services/Voice/TalkModeReducer.swift','Models/Voice/TalkModeConfiguration.swift','Services/Voice/TTSStream.swift','Services/Voice/TalkAudioEngine.swift','Services/Voice/TalkBenchmarkConfiguration.swift','Services/Voice/TalkBenchmarkAudio.swift','Services/Voice/MarkdownStripper.swift','Utils/StreamingDeltaProcessor.swift','Models/Configuration/SettingsSearchIndex.swift','Models/Configuration/ManagementTab.swift','AppleApps/AppleApp.swift','Services/SearchService.swift']:
     shutil.copy(core/f,src/Path(f).name)
 s=(core/'Managers/TTSService.swift').read_text(); chunk=s[s.index('enum TTSTextChunker {'):s.index('\nextension Notification.Name',s.index('enum TTSTextChunker {'))]; (src/'TTSTextChunker.swift').write_text('import Foundation\n'+chunk)
 for f in ['Voice/TalkModeTests.swift','Voice/TalkModeRawDeltaTests.swift','Voice/TTSStreamTests.swift','Voice/TTSTextChunkerTests.swift','Configuration/SettingsSearchSelfFindProbe.swift']:
@@ -50,7 +50,7 @@ import Combine
 import SwiftUI
 import AVFoundation
 @MainActor final class ToastManager { static let shared = ToastManager(); func error(_ title: String, message: String) {} }
-struct Agent: Identifiable { let id: UUID; let name: String; var ttsVoice: String? = nil }
+struct Agent: Identifiable { static let defaultId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!; let id: UUID; let name: String; var ttsVoice: String? = nil }
 @MainActor final class AgentManager: ObservableObject {
     static let shared = AgentManager()
     let activeAgent = Agent(id: UUID(), name: "Proof")
@@ -77,7 +77,7 @@ enum AssistantDeltaEvent { case delta(turnId: UUID, text: String), finished, can
     func windowState(id: UUID) -> ChatWindowState? { nil }
     struct WindowInfo { let id: UUID }
     func findWindows(byAgentId id: UUID) -> [WindowInfo] { [] }
-    func createWindow(agentId: UUID) -> UUID { UUID() }
+    func createWindow(agentId: UUID, showImmediately: Bool = true) -> UUID { UUID() }
     func showWindow(id: UUID) {}
 }
 @MainActor final class TranscriptionModeService {

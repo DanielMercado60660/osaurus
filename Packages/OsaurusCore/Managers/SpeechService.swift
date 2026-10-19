@@ -1108,11 +1108,13 @@ public final class SpeechService: ObservableObject {
     /// wake-word/continuous input before installing the shared duplex graph.
     func startTalkTranscription(duplex: TalkAudioEngine, gate: TalkSpeechGate,
                                 echoCancellation: Bool) async throws -> Bool {
-        guard AudioInputManager.shared.selectedInputSource == .microphone else {
-            throw SpeechError.transcriptionFailed("Talk mode requires a microphone input, not system audio.")
-        }
-        if !microphonePermissionGranted {
-            guard await requestMicrophonePermission() else { throw SpeechError.microphonePermissionDenied }
+        if !duplex.usesFileInput {
+            guard AudioInputManager.shared.selectedInputSource == .microphone else {
+                throw SpeechError.transcriptionFailed("Talk mode requires a microphone input, not system audio.")
+            }
+            if !microphonePermissionGranted {
+                guard await requestMicrophonePermission() else { throw SpeechError.microphonePermissionDenied }
+            }
         }
         try Task.checkCancellation()
         try await ensureModelLoaded()
@@ -1123,7 +1125,7 @@ public final class SpeechService: ObservableObject {
         currentTranscription = ""
         confirmedTranscription = ""
         isSpeechDetected = false
-        let selected = AudioInputManager.shared.selectedDeviceId
+        let selected = duplex.usesFileInput ? nil : AudioInputManager.shared.selectedDeviceId
         let deviceID = selected.flatMap { AudioInputManager.shared.getAudioDeviceId(for: $0) }
         guard selected == nil || deviceID != nil else {
             throw SpeechError.transcriptionFailed("The selected microphone is unavailable. Select another device in Voice Setup.")

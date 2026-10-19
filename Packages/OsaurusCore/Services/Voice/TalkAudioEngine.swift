@@ -5,6 +5,15 @@ import Foundation
 /// Talk-only duplex graph: voice processing sees the very same mixer output
 /// that renders TTS. Legacy dictation and read-aloud retain their own engines.
 final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
+    private let benchmark: TalkBenchmarkAudio? = TalkBenchmarkConfiguration.inputRequested ? TalkBenchmarkAudio() : nil
+    var usesFileInput: Bool { benchmark != nil }
+    var isBenchmarkRendering: Bool { benchmark?.isRendering ?? false }
+
+    func playInput(_ url: URL, leadingMs: Int, trailingMs: Int) async throws {
+        guard let benchmark else { throw TalkBenchmarkError("File input is not enabled") }
+        try await benchmark.playInput(url, leadingMs: leadingMs, trailingMs: trailingMs)
+    }
+
     private let queue = DispatchQueue(label: "ai.osaurus.talk.audio", qos: .userInitiated)
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
@@ -17,13 +26,20 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
     private var observer: NSObjectProtocol?
 
     func setOutputLevelHandler(_ handler: @escaping @Sendable (Float) -> Void) {
+        if let benchmark { benchmark.setLevel(handler); return }
         queue.sync { levelHandler = handler }
     }
 
     func start(voiceProcessing: Bool, deviceID: AudioDeviceID?,
                capture: @escaping @Sendable ([Float], Float) -> Void,
                routeChanged: @escaping @Sendable () -> Void) async throws -> (AVAudioFormat, Bool) {
-        try await withCheckedThrowingContinuation { continuation in
+        if let benchmark {
+            // Parse before starting: even invalid benchmark env must never fall back to the microphone.
+            _ = try TalkBenchmarkConfiguration.parse(ProcessInfo.processInfo.environment)
+            benchmark.start(capture: capture)
+            return (AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!, false)
+        }
+        return try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 do {
                     if voiceProcessing {
@@ -101,6 +117,7 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
     }
 
     func prepareAndPlay() async throws {
+        if let benchmark { try benchmark.prepare(); return }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 guard let engine = self.engine, engine.isRunning, let player = self.player else {
@@ -115,6 +132,7 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
     }
 
     func schedulePlayed(samples: [Float], completion: @escaping @Sendable (Bool) -> Void) {
+        if let benchmark { benchmark.schedule(samples, completion: completion); return }
         queue.async {
             guard let player = self.player, player.isPlaying,
                   let buffer = AVAudioPCMBuffer(pcmFormat: self.format, frameCapacity: AVAudioFrameCount(samples.count)),
@@ -132,6 +150,7 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
     }
 
     func cancelPlayback() {
+        if let benchmark { benchmark.cancel(); return }
         queue.sync {
             generation += 1
             player?.stop()
@@ -143,6 +162,7 @@ final class TalkAudioEngine: TTSStreamPlayer, @unchecked Sendable {
     }
 
     func shutdown() async {
+        if let benchmark { benchmark.shutdown(); return }
         await withCheckedContinuation { continuation in
             queue.async { self.shutdownLocked(); continuation.resume() }
         }

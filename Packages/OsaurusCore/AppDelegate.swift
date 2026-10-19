@@ -639,7 +639,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // common startup-crash cause).
         Task { @MainActor in
             await serverStartupTask.value
-            if !LaunchGuard.shouldSkip(.autoModelLoad) {
+            if !TalkBenchmarkConfiguration.inputRequested && !LaunchGuard.shouldSkip(.autoModelLoad) {
                 await SpeechService.shared.autoLoadIfNeeded()
             }
         }
@@ -1064,6 +1064,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     // MARK: - VAD Service
 
     private func initializeVADService() {
+        guard !TalkBenchmarkConfiguration.inputRequested else { return }
         let vadConfig = VADConfigurationStore.load()
         guard vadConfig.vadModeEnabled, !vadConfig.enabledAgentIds.isEmpty else { return }
 
