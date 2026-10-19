@@ -5,17 +5,21 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 class Element {
-  constructor(tag = 'div') { this.tag=tag; this.children=[]; this.handlers={}; this.value=''; this.hidden=false; this.disabled=false; this._text=''; }
+  constructor(tag = 'div') { this.tag=tag; this.children=[]; this.handlers={}; this.value=''; this.hidden=false; this.disabled=false; this._text='';this.open=false; }
   set textContent(value) { this.children=[]; this._text=String(value); }
   get textContent() { return this._text+this.children.map(c=>c.textContent).join(''); }
   get options() { return this.children; }
-  append(...items) { this.children.push(...items); if(this.tag==='select'&&!this.value) this.value=items[0]?.value||''; }
-  replaceChildren(...items) { this._text='';this.children=items;if(this.tag==='select')this.value=items[0]?.value||''; }
+  append(...items) { for(const item of items)item.parentElement=this;this.children.push(...items); if(this.tag==='select'&&!this.value) this.value=items[0]?.value||''; }
+  replaceChildren(...items) { this._text='';this.children=[];this.append(...items);if(this.tag==='select')this.value=items[0]?.value||''; }
   removeAttribute(name) { delete this[name]; }
   addEventListener(type,fn) { this.handlers[type]=fn; }
   setAttribute(name,value) { this[name]=value; }
   getContext() { return this.context??=mockCanvasContext(); }
-  focus() {}
+  get lastElementChild() { return this.children.at(-1); }
+  remove() { if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(c=>c!==this); }
+  showModal() { this.open=true; }
+  close() { this.open=false; }
+  focus() { this.focused=true; }
   setPointerCapture() {}
 }
 function mockCanvasContext() {
@@ -36,7 +40,7 @@ async function page(run, voice = false, secure = true, agents = [{id:'agent-1',n
     stop(){this.state='inactive';this.ondataavailable({data:new Blob(['audio'])});this.onstop();}
   }
   const tracks=[{stop(){}}];
-  const elements=new Map(['agents','status','chat','composer','prompt','mic','stop','send','new','speaker','talk','voice-hint','avatar-toggle','avatar-small','companion-toggle','avatar-large','companion-stage','companion-caption','screen-tab','chat-tab','screen-panel','screen-status','screen-enlarge','screen-image','screen-agent-hint','prompt-label'].map(id=>[id,new Element(id==='agents'?'select':'div')]));
+  const elements=new Map(['agents','status','chat','composer','prompt','mic','stop','send','new','speaker','talk','voice-hint','avatar-toggle','avatar-small','companion-toggle','avatar-large','companion-stage','companion-caption','screen-tab','chat-tab','screen-panel','screen-status','screen-enlarge','screen-image','screen-agent-hint','prompt-label','agent-model','model-picker','model-list','model-status','model-close','model-reload'].map(id=>[id,new Element(id==='agents'?'select':'div')]));
   const requests=[], documentEvents={}, windowEvents={};
   const listen=(events,type,fn)=>(events[type]??=[]).push(fn);
   const context=vm.createContext({
@@ -571,4 +575,164 @@ test('switching between Chat and Screen keeps history when the selected agent is
   await p.send('Remember milk');p.$('screen-tab').onclick();p.$('chat-tab').onclick();
   await p.send('What was it?');
   assert.equal(JSON.parse(p.requests[1].options.body).messages.length,3);
+});
+
+
+const pickerCatalog={favorites:['remote-favorite','local-favorite'],models:[
+  {id:'local-first',name:'Local first',tab_title:'Local',available:true},
+  {id:'local-favorite',name:'Local favorite',tab_title:'Local',favorite_key:'local-favorite',available:true},
+  {id:'unavailable',name:'Unsupported bundle',tab_title:'Local',available:false},
+  {id:'remote-first',name:'Remote first',tab_title:'Provider',available:true},
+  {id:'remote-favorite',name:'Remote favorite',tab_title:'Provider',favorite_key:'remote-favorite',available:true},
+  {id:'image',name:'Image generator',tab_title:'Images',kind:'image',available:true},
+]};
+const modelRows=p=>p.$('model-list').children.flatMap(section=>section.children.filter(child=>child.tag==='button'));
+const noModel=()=>new Response('data: '+JSON.stringify({error:{message:"This agent has no model configured. Set the agent’s default model on the host and try again."}})+'\n\ndata: [DONE]\n\n');
+
+test('model picker preserves tab order and stable favorites-first order, with disabled reasons',async()=>{
+  const p=await page(()=>Response.json(pickerCatalog));
+  assert.equal(p.$('agent-model').textContent,'Model: Choose a model');
+  await p.$('agent-model').onclick();
+  assert.equal(p.$('model-picker').open,true);
+  assert.deepEqual(p.$('model-list').children.map(s=>s.children[0].textContent),['Local','Provider','Images']);
+  assert.deepEqual(modelRows(p).map(r=>r.textContent),[
+    'Local favorite · Favorite','Local first','Unsupported bundle · Unavailable — this Mac cannot run this model.',
+    'Remote favorite · Favorite','Remote first','Image generator · Image model — cannot reply to chat messages.',
+  ]);
+  assert.equal(p.requests[0].options.cache,'no-store');
+  for(const row of modelRows(p).filter(r=>r.disabled))await row.onclick();
+  assert.equal(p.requests.length,1);
+});
+
+test('current effective model is shown and save uses PUT plus the authoritative effective result',async()=>{
+  const p=await page(url=>url==='/models/picker'?Response.json(pickerCatalog):Response.json({ok:true,effective_model:'resolved-model'}),false,true,
+    [{id:'agent/with space',name:'Agent',default_model:'fallback',effective_model:'local-first'}]);
+  assert.equal(p.$('agent-model').textContent,'Model: local-first');
+  await p.$('agent-model').onclick();assert.equal(modelRows(p)[1]['aria-pressed'],'true');
+  await modelRows(p)[0].onclick();
+  assert.equal(p.requests[1].url,'/agents/agent%2Fwith%20space/model');
+  assert.equal(p.requests[1].options.method,'PUT');assert.deepEqual(JSON.parse(p.requests[1].options.body),{model:'local-favorite'});
+  assert.equal(p.$('agent-model').textContent,'Model: resolved-model');assert.equal(p.$('model-picker').open,false);
+});
+
+test('in-band no-model error opens picker and explicit one-tap resend preserves history without duplicate bubbles',async()=>{
+  let runs=0;
+  const p=await page(url=>url==='/models/picker'?Response.json(pickerCatalog):url.endsWith('/model')?
+    Response.json({ok:true,effective_model:'local-favorite'}):++runs===2?noModel():sse('Reply'));
+  await p.send('first');await p.send('retry this');
+  const failed=p.$('chat').lastElementChild.children[1];
+  assert.equal(failed.lastElementChild.textContent,'Choose a model');assert.doesNotMatch(p.$('chat').textContent,/No completed reply/);
+  await failed.lastElementChild.onclick();await modelRows(p)[0].onclick();
+  assert.equal(runs,2);assert.equal(failed.lastElementChild.textContent,'Resend last message');
+  assert.equal(failed.lastElementChild.focused,true);
+  await failed.lastElementChild.onclick();
+  assert.equal(p.$('chat').children.length,4);assert.equal(runs,3);
+  const run=p.requests.filter(r=>r.url.endsWith('/run')).at(-1);
+  assert.deepEqual(JSON.parse(run.options.body).messages,[{role:'user',content:'first'},{role:'assistant',content:'Reply'},{role:'user',content:'retry this'}]);
+  assert.equal(p.$('status').textContent,'Ready');assert.equal(p.$('stop').hidden,true);
+  await p.send('follow-up');assert.equal(JSON.parse(p.requests.at(-1).options.body).messages.length,5);
+});
+
+test('HTTP no-model failure is recoverable; other pre-reply failures and cancellations leave no dead bubble',async()=>{
+  const missing=await page(()=>Response.json({error:{message:'This agent has no model configured.'}},{status:400}));
+  await missing.send('hello');assert.match(missing.$('chat').textContent,/Choose a model/);
+  const failed=await page(()=>Response.json({error:{message:'Unavailable'}},{status:503}));
+  await failed.send('hello');assert.equal(failed.$('chat').children.length,1);assert.match(failed.$('status').textContent,/Unavailable/);
+  const stopped=await page((url,options)=>new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new DOMException('Stopped','AbortError')))));
+  const pending=stopped.send('hello');await tick();stopped.$('stop').onclick();await pending;
+  assert.equal(stopped.$('chat').children.length,1);
+});
+
+test('404 hides only the affected agent model control and recovery action, including after switching back',async()=>{
+  const agents=[{id:'builtin',name:'Built-in',is_built_in:true},{id:'editable',name:'Editable'}];
+  const p=await page(url=>url==='/models/picker'?Response.json(pickerCatalog):url.endsWith('/model')?
+    Response.json({error:'agent_not_found'},{status:404}):noModel(),false,true,agents);
+  await p.send('hello');await p.$('chat').lastElementChild.children[1].lastElementChild.onclick();
+  await modelRows(p)[0].onclick();
+  assert.equal(p.$('agent-model').hidden,true);assert.equal(p.$('model-picker').open,false);
+  assert.doesNotMatch(p.$('chat').textContent,/Choose a model|Resend/);assert.match(p.$('chat').textContent,/cannot be changed here/);
+  p.$('agents').value='editable';p.$('agents').onchange();assert.equal(p.$('agent-model').hidden,false);
+  p.$('agents').value='builtin';p.$('agents').onchange();assert.equal(p.$('agent-model').hidden,true);
+});
+
+test('editable built-in is not hidden merely because it is built-in',async()=>{
+  const p=await page(url=>url==='/models/picker'?Response.json(pickerCatalog):Response.json({ok:true,effective_model:'local-favorite'}),false,true,
+    [{id:'orchestrator',name:'Orchestrator',is_built_in:true}]);
+  await p.$('agent-model').onclick();await modelRows(p)[0].onclick();assert.equal(p.$('agent-model').hidden,false);
+});
+
+test('catalog failure and empty catalog offer reload; stale results after closing or changing agents are ignored',async()=>{
+  let resolve;
+  const p=await page(()=>new Promise(r=>resolve=r));
+  const opening=p.$('agent-model').onclick();p.$('model-close').onclick();
+  resolve(Response.json(pickerCatalog));await opening;assert.equal(p.$('model-list').children.length,0);
+  const openingAgain=p.$('agent-model').onclick();p.$('agents').onchange();
+  resolve(Response.json(pickerCatalog));await openingAgain;assert.equal(p.$('model-list').children.length,0);
+  let calls=0;
+  const failed=await page(()=>++calls===1?Response.json({error:{message:'Offline'}},{status:503}):Response.json({models:[]}));
+  await failed.$('agent-model').onclick();assert.match(failed.$('model-status').textContent,/Offline/);assert.equal(failed.$('model-reload').hidden,false);
+  await failed.$('model-reload').onclick();assert.match(failed.$('model-status').textContent,/No models available/);
+});
+
+test('save failure retains selection and recovery; save locks navigation and duplicate submissions',async()=>{
+  let resolve;
+  const p=await page(url=>url==='/models/picker'?Response.json(pickerCatalog):url.endsWith('/model')?new Promise(r=>resolve=r):noModel());
+  await p.send('hello');await p.$('agent-model').onclick();const row=modelRows(p)[0],pending=row.onclick();
+  assert.equal(p.$('agents').disabled,true);assert.equal(p.$('send').disabled,true);assert.equal(p.$('model-list').disabled,true);
+  await row.onclick();p.$('model-close').onclick();await p.send('accidental');
+  assert.equal(p.requests.filter(r=>r.url.endsWith('/model')).length,1);assert.equal(p.$('model-picker').open,true);
+  resolve(Response.json({error:{message:'Save failed'}},{status:503}));await pending;
+  assert.match(p.$('model-status').textContent,/Save failed/);assert.equal(p.$('agent-model').textContent,'Model: Choose a model');
+  assert.equal(p.$('model-close').disabled,false);assert.equal(p.$('model-list').disabled,false);
+  p.$('model-close').onclick();assert.equal(p.$('chat').lastElementChild.children[1].lastElementChild.textContent,'Choose a model');
+});
+
+test('new chat, agent change and a newer message invalidate old resend actions',async()=>{
+  for(const change of ['new','agent','message']) {
+    const p=await page(()=>noModel(),false,true,[{id:'one',name:'One'},{id:'two',name:'Two'}]);
+    await p.send('old');const old=p.$('chat').lastElementChild.children[1].lastElementChild;
+    if(change==='new')p.$('new').onclick();
+    else if(change==='agent'){p.$('agents').value='two';p.$('agents').onchange();}
+    else await p.send('newer');
+    const count=p.requests.length;await old.onclick();assert.equal(p.requests.length,count);assert.equal(p.$('model-picker').open,false);
+  }
+});
+
+test('Escape closes picker, allows recovery to reopen, and catalog text is never interpreted as HTML',async()=>{
+  const p=await page(url=>url==='/models/picker'?Response.json({models:[{id:'safe',name:'<img src=x onerror=bad()>',tab_title:'<script>bad()</script>'}]}):noModel());
+  await p.send('hello');const output=p.$('chat').lastElementChild.children[1];
+  await output.lastElementChild.onclick();let prevented=false;
+  p.$('model-picker').handlers.cancel({preventDefault(){prevented=true;}});
+  assert.equal(prevented,true);assert.equal(p.$('model-picker').open,false);
+  await output.lastElementChild.onclick();assert.equal(p.$('model-picker').open,true);
+  assert.equal(modelRows(p)[0].textContent,'<img src=x onerror=bad()>');assert.equal(modelRows(p)[0].children.length,0);
+});
+
+
+test('favorites retain host ordering rather than favorites timestamp order, without mutating catalog',async()=>{
+  const catalog={favorites:['b','a'],models:[
+    {id:'normal',tab_title:'Local'}, {id:'a',favorite_key:'a',tab_title:'Local'},
+    {id:'b',favorite_key:'b',tab_title:'Local'}, {id:'last',tab_title:'Local'},
+  ]};
+  const before=JSON.stringify(catalog),p=await page(()=>Response.json(catalog));
+  const groups=p.context.phoneModelGroups(catalog);
+  assert.deepEqual(Array.from(groups[0].models,m=>m.id),['a','b','normal','last']);assert.equal(JSON.stringify(catalog),before);
+});
+
+test('empty effective model response does not enable resend or claim an active model',async()=>{
+  const p=await page(url=>url==='/models/picker'?Response.json(pickerCatalog):url.endsWith('/model')?
+    Response.json({ok:true,effective_model:''}):noModel());
+  await p.send('hello');await p.$('agent-model').onclick();await modelRows(p)[0].onclick();
+  assert.equal(p.$('agent-model').textContent,'Model: Choose a model');
+  assert.equal(p.$('chat').lastElementChild.children[1].lastElementChild.textContent,'Choose a model');
+  assert.match(p.$('status').textContent,/no effective model/);
+});
+
+test('model control follows Chat/Screen selection and hides when no agent is available',async()=>{
+  const p=await page(()=>sse('ok'),false,true,[{id:'plain',name:'Plain',effective_model:'plain-model'},
+    {id:'computer',name:'Computer',computer_use_enabled:true,effective_model:'computer-model'}]);
+  assert.equal(p.$('agent-model').textContent,'Model: plain-model');
+  p.$('screen-tab').onclick();assert.equal(p.$('agent-model').textContent,'Model: computer-model');
+  p.$('chat-tab').onclick();assert.equal(p.$('agent-model').textContent,'Model: computer-model');
+  const empty=await page(()=>sse('ok'));empty.$('screen-tab').onclick();assert.equal(empty.$('agent-model').hidden,true);empty.$('chat-tab').onclick();
 });

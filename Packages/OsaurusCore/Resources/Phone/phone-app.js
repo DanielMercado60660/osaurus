@@ -3,6 +3,111 @@ const $ = id => document.getElementById(id);
 let history = [], controller, recording, micStream, holding = false, busy = false;
 let audioContext, speechQueue, speakerEnabled=false, talkActive=false, talkController;
 const agentsByID=new Map();
+const modelUnavailableAgents=new Set();
+let modelSaving=false, pickerVersion=0, pendingRetry=null;
+// Preserve host tab/row order, with a stable favorites-first partition per tab.
+function phoneModelGroups(catalog) {
+  const favorites=new Set(catalog.favorites||[]), groups=new Map();
+  for(const model of catalog.models||[]) {
+    const title=model.tab_title||model.provider||'Models';
+    if(!groups.has(title))groups.set(title,[]);
+    groups.get(title).push({...model,favorite:favorites.has(model.favorite_key)});
+  }
+  return [...groups].map(([title,models])=>({title,models:[...models.filter(m=>m.favorite),...models.filter(m=>!m.favorite)]}));
+}
+function phoneModelDisabledReason(model) {
+  if(model.kind==='image'||model.source==='image')return 'Image model — cannot reply to chat messages.';
+  return model.available===false?'Unavailable — this Mac cannot run this model.':'';
+}
+function updateModelControl() {
+  const agent=agentsByID.get($('agents').value);
+  $('agent-model').hidden=!agent||modelUnavailableAgents.has(agent.id);
+  $('agent-model').textContent=`Model: ${(agent?.effective_model??agent?.default_model)||'Choose a model'}`;
+  $('agent-model').disabled=busy||!!talkController||modelSaving;
+}
+function renderModelRetry() {
+  if(!pendingRetry)return;
+  const retry=pendingRetry;
+  retry.output.replaceChildren();
+  const explanation=document.createElement('p');
+  if(modelUnavailableAgents.has(retry.agent)) {
+    explanation.textContent='This agent’s model cannot be changed here. Choose another agent or configure it on the Mac.';
+    retry.output.append(explanation);return;
+  }
+  explanation.textContent=retry.ready?'Model selected. Your message is ready to resend.':'This agent has no model configured.';
+  const action=document.createElement('button');action.type='button';
+  action.textContent=retry.ready?'Resend last message':'Choose a model';
+  action.disabled=busy||!!talkController||modelSaving;
+  action.onclick=()=>{
+    if(pendingRetry!==retry||$('agents').value!==retry.agent||busy||talkController||modelSaving)return;
+    return retry.ready?sendMessage(retry.text,retry.output):openModelPicker();
+  };
+  retry.output.append(explanation,action);
+}
+function closeModelPicker() {
+  if(modelSaving)return;
+  pickerVersion++;$('model-picker').close();
+}
+async function openModelPicker() {
+  const agent=$('agents').value;
+  if(!agent||busy||talkController||modelSaving||modelUnavailableAgents.has(agent))return;
+  const version=++pickerVersion;
+  $('model-list').replaceChildren();$('model-status').textContent='Loading models…';
+  $('model-reload').hidden=true;$('model-picker').showModal();
+  try {
+    const catalog=await (await checked(await fetch('/models/picker',{cache:'no-store'}))).json();
+    if(version!==pickerVersion||agent!==$('agents').value)return;
+    const groups=phoneModelGroups(catalog);
+    $('model-status').textContent=groups.length?'Choosing a model saves this agent’s default on the Mac.':'No models available. Add a model on your Mac, then reload.';
+    $('model-reload').hidden=false;
+    for(const group of groups) {
+      const section=document.createElement('section'), heading=document.createElement('h3');heading.textContent=group.title;section.append(heading);
+      for(const model of group.models) {
+        const row=document.createElement('button');row.type='button';row.className='model-option';
+        const reason=phoneModelDisabledReason(model), current=agentsByID.get(agent)?.effective_model??agentsByID.get(agent)?.default_model;
+        row.textContent=[model.name||model.id,model.favorite?'Favorite':'',current===model.id?'Current':'',reason].filter(Boolean).join(' · ');
+        row.disabled=!!reason;row.setAttribute('aria-pressed',String(current===model.id));
+        row.onclick=()=>!reason&&saveAgentModel(agent,model.id,version);
+        section.append(row);
+      }
+      $('model-list').append(section);
+    }
+  } catch(error) {
+    if(version!==pickerVersion)return;
+    $('model-status').textContent=error.message;$('model-reload').hidden=false;
+  }
+}
+async function saveAgentModel(agent,model,version) {
+  if(modelSaving||version!==pickerVersion||agent!==$('agents').value)return;
+  modelSaving=true;setBusy(busy);$('model-close').disabled=true;$('model-reload').disabled=true;
+  $('model-list').disabled=true;$('model-status').textContent='Saving model…';
+  try {
+    const response=await fetch(`/agents/${encodeURIComponent(agent)}/model`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model})});
+    if(response.status===404) {
+      modelUnavailableAgents.add(agent);
+      status('This agent’s model cannot be changed here. Choose another agent or configure it on the Mac.');
+    } else {
+      const result=await (await checked(response)).json();
+      const entry=agentsByID.get(agent);entry.default_model=model;entry.effective_model=result.effective_model;
+      if(pendingRetry?.agent===agent)pendingRetry.ready=!!result.effective_model;
+      status(result.effective_model?'Model saved.':'Model saved, but the Mac has no effective model. Choose another model.');
+    }
+    modelSaving=false;closeModelPicker();
+  } catch(error) { $('model-status').textContent=error.message; }
+  finally {
+    modelSaving=false;$('model-close').disabled=false;$('model-reload').disabled=false;$('model-list').disabled=false;
+    setBusy(busy);
+    if(!$('model-picker').open) {
+      if(pendingRetry&&!modelUnavailableAgents.has(agent))pendingRetry.output.lastElementChild?.focus();
+      else if(modelUnavailableAgents.has(agent))$('agents').focus();
+      else $('agent-model').focus();
+    }
+  }
+}
+$('agent-model').onclick=openModelPicker;
+$('model-close').onclick=closeModelPicker;
+$('model-reload').onclick=openModelPicker;
+$('model-picker').addEventListener('cancel',event=>{event.preventDefault();closeModelPicker();});
 const companion=new PhoneCompanion($('avatar-small'),$('avatar-large'),$('companion-caption'));
 const screenPanel=new PhoneScreenPanel({get:$,onModeChange:()=>{
   const previousAgent=$('agents').value;
@@ -90,20 +195,23 @@ function message(role, text) {
   const body=document.createElement('div'); markdown(body,text); article.append(label,body); $('chat').append(article); return body;
 }
 function setBusy(value) {
-  busy=value; const locked=value||!!talkController; $('send').disabled=locked||!$('agents').value; $('agents').disabled=locked; $('new').disabled=locked;
+  busy=value; const locked=value||!!talkController||modelSaving; $('send').disabled=locked||!$('agents').value; $('agents').disabled=locked; $('new').disabled=locked;
   $('screen-tab').disabled=locked;$('chat-tab').disabled=locked;
-  $('mic').disabled=(locked&&!holding)||!$('agents').value; $('stop').hidden=!locked;voiceButtons();
+  $('mic').disabled=(locked&&!holding)||!$('agents').value; $('stop').hidden=!locked;voiceButtons();updateModelControl();renderModelRetry();
 }
 async function checked(response) {
   if (!response.ok) { let detail = await response.text(); try { const j=JSON.parse(detail); detail=j.error?.message||j.message||detail; } catch {} throw new Error(`${response.status}: ${detail.slice(0,400)}`); }
   return response;
 }
-async function sendMessage(text=$('prompt').value.trim()) {
-  if(busy) return false;
+async function sendMessage(text=$('prompt').value.trim(),retryOutput=null) {
+  if(busy||modelSaving||$('model-picker').open) return false;
   const agent=$('agents').value; if(!text||!agent) return false;
   if(screenPanel.open&&!phoneComputerUseAgents([agentsByID.get(agent)]).length)return false;
-  $('prompt').value=''; message('user',text);
-  const turn=[...history,{role:'user',content:text}], output=message('assistant','…'); let answer='', ended=false;
+  if(pendingRetry&&pendingRetry.output!==retryOutput)pendingRetry.output.parentElement.remove();
+  pendingRetry=null;
+  $('prompt').value='';if(!retryOutput)message('user',text);
+  const turn=[...history,{role:'user',content:text}], output=retryOutput||message('assistant','…');
+  output.textContent='…';let answer='', ended=false;
   controller=new AbortController(); setBusy(true); status(talkActive?'Thinking…':'Agent is working…');
   companionMood({thinking:true});companion.setCaption('');
   const release=new SentenceRelease();let speechTimer, success=false, queue=null;
@@ -134,7 +242,12 @@ async function sendMessage(text=$('prompt').value.trim()) {
     await queue?.finish();
     if(controller.signal.aborted)throw new DOMException('Stopped','AbortError');
     history=[...turn,{role:'assistant',content:answer}]; success=true;status('Ready');companionMood({});companion.react('happy');
-  } catch(error) { controller?.abort(); queue?.interrupt(); companionError(error);status(error.name==='AbortError'?'Stopped. Partial reply was not added to history.':error.message); if(!answer) output.textContent='No completed reply.'; }
+  } catch(error) { controller?.abort(); queue?.interrupt(); companionError(error);status(error.name==='AbortError'?'Stopped. Partial reply was not added to history.':error.message); if(!answer) {
+    if(error.name!=='AbortError'&&/this agent has no model configured/i.test(error.message)) {
+      pendingRetry={agent,text,output,ready:false};renderModelRetry();
+      status('Choose a model, then resend your message.');
+    } else output.parentElement.remove();
+  } }
   finally{screenPanel.poller.refresh();clearInterval(speechTimer); controller=null;speechQueue=null;setBusy(false);if(!talkActive)$('prompt').focus();}
   return success;
 }
@@ -165,7 +278,7 @@ $('talk').onclick=async()=>{
 };
 $('avatar-toggle').onclick=()=>{if(!$('avatar-toggle').disabled)return $('talk').onclick();};
 $('companion-toggle').onclick=()=>$('talk').onclick();
-function clearChat(){history=[];$('chat').replaceChildren();companionMood({});companion.setAgent(agentsByID.get($('agents').value));status('New chat');}
+function clearChat(){closeModelPicker();pendingRetry=null;history=[];updateModelControl();$('chat').replaceChildren();companionMood({});companion.setAgent(agentsByID.get($('agents').value));status('New chat');}
 $('new').onclick=clearChat; $('agents').onchange=clearChat;
 async function stopRecording(){ holding=false; if(recording?.state==='recording') recording.stop(); }
 $('mic').addEventListener('pointerdown',async event=>{

@@ -313,6 +313,15 @@ and ordinary loopback callers cannot fetch it, even when they can use chat.
 
 The phone companion uses the selected agent’s mascot color and accessory, or its custom image with an audio-reactive ring. Tap the small header companion to start talk; it grows in the center with playback-synchronized sentence captions. Tap it again to interrupt and end talk. Reduce Motion keeps a static pose and simple mouth; hiding the page stops animation and talk.
 
+Under the phone’s agent picker, tap **Model** to change that agent’s default
+model on the Mac. **Choose a model** groups the host’s catalog by provider/tab,
+with favorites first in each group. Unavailable bundles and image-only models
+are disabled with an explanation. Built-in agents whose model endpoint returns
+404 hide this control; the editable Orchestrator remains supported. If a chat
+fails because no model is configured, use its inline **Choose a model** action,
+select a model, then tap **Resend last message**. Selection saves the default;
+resending is a separate action and retains successful conversation history.
+
 The phone page supports an agent picker, streaming chat, safe basic Markdown,
 and Hold to talk using the Mac's `/audio/transcriptions` endpoint (configure a
 speech model on the Mac first). **Speaker on** speaks replies through
