@@ -132,3 +132,22 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
 - Upstream check: 0 new commits on upstream/main since the fork point.
   `fork/sync-upstream.sh` added (merge → build → deterministic evals on a
   `sync/upstream` branch).
+
+## 2026-10-19 (day 1, night) — first talk-mode run
+
+- PocketTTS for FluidAudio 0.14.1 downloaded (stock flat layout, ~700 MB,
+  owner-approved) next to the owner's mama-mei `v2.1` copy (untouched; that one
+  is the 0.15.x speed re-convert and can't load on 0.14.1 → T15 upgrade).
+- **Headless talk benchmark** (`fork/metrics/talk_bench.sh`, Qwen3.5-4B-4bit,
+  PocketTTS alba, paced WAV in / null sink, software timings only):
+  4 turns, end-of-speech → first visible token p50 2.09 s / p90 8.65 s,
+  → first audio p50 3.58 s / p90 12.38 s (p90 = cold first turn incl. model
+  load). Warm turns: first token 2.0–2.8 s, first audio 2.8–3.6 s.
+  Barge-in scenario: interruption observed, confirmed-interrupt → sink stop
+  0.02 ms (software). Result: `fork/metrics/results/talk-fork-qwen35-4b.json`.
+- Diagnosis from app log: Qwen3.5 reasons before speaking (capital-of-France:
+  40 reasoning deltas vs 3 content); ≈0.9 s speech end → stream start
+  (700 ms end-of-turn silence + ASR). → T16: per-stage telemetry + visible
+  "Think before speaking" talk setting (default Off, via the composer's
+  explicit thinking mechanism, no template coercion) + verify speculative ASR.
+- Running: T15 FluidAudio 0.15.x upgrade, T16 talk latency (Codex).
