@@ -27,22 +27,29 @@ private let heroAvatarIconFontSize: CGFloat = 28
 /// Shared by `ChatEmptyState.heroAvatar` and `ChatEmptyStateNoModels.welcomeAvatar`.
 private struct HeroAgentAvatar: View {
     let agent: Agent
+    @AppStorage(AnimatedAvatarSetting.defaultsKey) private var showAnimatedAvatar = false
 
     var body: some View {
-        AgentAvatarView(
-            mascotId: agent.avatar,
-            name: agent.name,
-            tint: agentColorFor(agent.name),
-            diameter: heroAvatarDiameter,
-            customImageURL: agent.customAvatarURL,
-            monogramFontSize: heroAvatarIconFontSize,
-            borderWidth: 0,
-            bleedsToEdge: true
-        )
+        if showAnimatedAvatar {
+            LiveAgentAvatarView(agentID: agent.id, mascotID: agent.avatar)
+                .frame(width: heroAvatarDiameter, height: heroAvatarDiameter)
+        } else {
+            AgentAvatarView(
+                mascotId: agent.avatar,
+                name: agent.name,
+                tint: agentColorFor(agent.name),
+                diameter: heroAvatarDiameter,
+                customImageURL: agent.customAvatarURL,
+                monogramFontSize: heroAvatarIconFontSize,
+                borderWidth: 0,
+                bleedsToEdge: true
+            )
+        }
     }
 }
 
 struct ChatEmptyState: View {
+    @AppStorage(AnimatedAvatarSetting.defaultsKey) private var showAnimatedAvatar = false
     let hasModels: Bool
     let selectedModel: String?
     let agents: [Agent]
@@ -364,7 +371,14 @@ struct ChatEmptyState: View {
 
     @ViewBuilder
     private var heroAvatar: some View {
-        if isRemoteChat {
+        if isRemoteChat && showAnimatedAvatar {
+            // Remote transport does not expose host audio; use an idle pose.
+            AnimatedAgentAvatarView(
+                mood: .idle,
+                tint: (remoteAgentAvatar ?? sharedAgent?.avatar).flatMap(AgentMascot.init(rawValue:))?.color ?? AgentMascot.blue.color
+            )
+            .frame(width: heroAvatarDiameter, height: heroAvatarDiameter)
+        } else if isRemoteChat {
             // Match the local hero: the remote agent's own mascot (surfaced over
             // the Secure Channel), falling back to a monogram on its name.
             AgentAvatarView(
