@@ -359,6 +359,23 @@ struct ModelRuntimeRAMFeasibilityTests {
         )
     }
 
+    @Test("Auxiliary residents enter total projection without charging host headroom twice")
+    func speechResidentsSupplementProjection() {
+        let baseline = ModelRuntime.buildRAMFeasibility(modelName: "chat",
+            incomingWeightsBytes: 4 * gb, incomingLoadFootprintBytes: 4 * gb,
+            resident: 0, inflightOther: 0, kvHeadroom: gb,
+            physical: 16 * gb, available: 8 * gb, automaticMemoryLimitsDisabled: false)
+        let withSpeech = ModelRuntime.buildRAMFeasibility(modelName: "chat",
+            incomingWeightsBytes: 4 * gb, incomingLoadFootprintBytes: 4 * gb,
+            resident: 0, inflightOther: 0, kvHeadroom: gb,
+            physical: 16 * gb, available: 8 * gb, auxiliaryBytes: 2 * gb,
+            automaticMemoryLimitsDisabled: false)
+        #expect(withSpeech.projectedBytes == baseline.projectedBytes + 2 * gb)
+        #expect(withSpeech.requiredAvailableBytes == baseline.requiredAvailableBytes)
+        #expect(withSpeech.availableMemoryBytes == baseline.availableMemoryBytes)
+        #expect(withSpeech.residentWeightsBytes == baseline.residentWeightsBytes)
+    }
+
     // MARK: - Shared builder: verdict boundaries
 
     @Test("Comfortable fit is ok with severity none")

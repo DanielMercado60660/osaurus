@@ -63,6 +63,10 @@ public final class PrivacyFilterEngine {
         }
         do {
             let kit = try await PrivacyFilterKit(source: .directory(directory))
+            let estimate = await Task.detached(priority: .utility) {
+                AuxiliaryModelEstimate.bytes(at: [directory])
+            }.value
+            AuxiliaryModelResidency.shared.track(kit, kind: .privacy, estimatedBytes: estimate)
             self.kit = kit
             self.loadedBundleDirectory = directory
         } catch let error as ModelLoaderError {

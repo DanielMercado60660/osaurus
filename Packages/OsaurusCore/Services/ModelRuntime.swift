@@ -3770,11 +3770,12 @@ public actor ModelRuntime {
         kvHeadroom: Int64,
         physical: Int64,
         available: Int64,
+        auxiliaryBytes: Int64 = 0,
         automaticMemoryLimitsDisabled: Bool =
             ServerRuntimeSettingsStore.automaticMemoryLimitsDisabled()
     ) -> RAMFeasibility {
         let requiredAvailable = incomingLoadFootprintBytes + kvHeadroom
-        let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom
+        let projected = resident + inflightOther + incomingLoadFootprintBytes + kvHeadroom + auxiliaryBytes
         let thresholds = ServerRuntimeSettingsStore.modelLoadRAMThresholds()
         let softLimit = Int64(Double(physical) * thresholds.soft)
         let hardLimit = Int64(Double(physical) * thresholds.hard)
@@ -3895,6 +3896,7 @@ public actor ModelRuntime {
             kvHeadroom: kvHeadroom,
             physical: physical,
             available: Self.availableMemoryBytes(),
+            auxiliaryBytes: AuxiliaryModelResidency.shared.knownEstimatedBytes,
             automaticMemoryLimitsDisabled: automaticMemoryLimitsDisabled
         )
 
@@ -4021,8 +4023,45 @@ public actor ModelRuntime {
             inflightOther: inflightOther,
             kvHeadroom: kvHeadroom,
             physical: physical,
-            available: Self.availableMemoryBytes()
+            available: Self.availableMemoryBytes(),
+            auxiliaryBytes: AuxiliaryModelResidency.shared.knownEstimatedBytes
         )
+    }
+
+    /// The Talk advisory shares bundle sizing and resident ownership with the
+    /// ordinary load projection. It neither loads nor evicts any model.
+    func talkMemoryDecision(modelName: String?, local: Bool,
+                            auxiliary: [TalkMemoryBudget.Component]) -> TalkMemoryBudget.Decision {
+        let physical = ProcessInfo.processInfo.physicalMemory
+        var components = auxiliary
+        for (name, holder) in modelCache {
+            components.append(.init(role: "chat:\(name)", estimatedBytes:
+                GPUMemoryBudget.estimatedChatWorkingSetBytes(onDiskBytes: holder.weightsSizeBytes), resident: true))
+        }
+        for (name, bytes) in inflightLoadWeights where modelCache[name] == nil {
+            components.append(.init(role: "loading:\(name)", estimatedBytes:
+                GPUMemoryBudget.estimatedChatWorkingSetBytes(onDiskBytes: bytes), resident: false))
+        }
+        if local {
+            if let modelName, let found = ModelManager.findInstalledModel(named: modelName) {
+                if modelCache[found.name] == nil && inflightLoadWeights[found.name] == nil {
+                    let bytes = Self.findLocalDirectory(forModelId: found.id).map {
+                        Self.effectiveLoadFootprintBytes(rawWeightsBytes:
+                            candidateWeightsSizeBytes(modelName: found.name, directory: $0),
+                            modelDirectory: $0, modelName: found.name)
+                    }
+                    components.append(.init(role: "chat", estimatedBytes:
+                        bytes.flatMap { GPUMemoryBudget.estimatedChatWorkingSetBytes(onDiskBytes: $0) }, resident: false))
+                }
+            } else {
+                components.append(.init(role: "chat", estimatedBytes: nil, resident: false))
+            }
+        }
+        return TalkMemoryBudget.assess(.init(physicalBytes: physical,
+            comfortableBytes: UInt64(Double(Self.gpuBudgetBytes(physicalMemoryBytes: Int64(physical)))
+                * GPUMemoryBudget.comfortableBudgetRatio),
+            availableBytes: ChatResidencyHandoff.sampledAvailableMemoryBytes().map { UInt64(max(0, $0)) },
+            reserveBytes: UInt64(ChatResidencyHandoff.headroomBytes), components: components))
     }
 
     /// Resolve the live, authoritative memory facts used to admit one

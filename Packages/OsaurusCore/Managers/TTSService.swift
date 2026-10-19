@@ -614,7 +614,7 @@ public final class TTSService: ObservableObject {
             do {
                 // Route through the downloader explicitly so we get progress callbacks.
                 // When models are already cached this returns nearly instantly.
-                _ = try await PocketTtsResourceDownloader.ensureModels(
+                let modelDirectory = try await PocketTtsResourceDownloader.ensureModels(
                     directory: nil,
                     progressHandler: { progress in
                         Task { @MainActor in
@@ -633,6 +633,7 @@ public final class TTSService: ObservableObject {
 
                 let mgr = PocketTtsManager(defaultVoice: voice)
                 try await mgr.initialize()
+                await SpeechModelMemory.track(mgr, kind: .tts, roots: SpeechModelMemory.ttsRoots(directory: modelDirectory))
                 await MainActor.run {
                     guard let self else { return }
                     self.manager = mgr

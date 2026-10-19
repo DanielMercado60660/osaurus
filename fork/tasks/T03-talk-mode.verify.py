@@ -40,7 +40,7 @@ struct MLXModel { let id: String; let name: String; let description: String; let
 ''')
 # Additional production files are typechecked against explicitly inert app seams.
 # This is NOT a full-app build or provider/hardware proof.
-for f in ['Services/Voice/TalkModeController.swift','Services/Voice/TalkModeHotKey.swift','Models/Voice/TalkModeConfigurationStore.swift','Views/Voice/TalkModeSettingsTab.swift']:
+for f in ['Services/Voice/TalkMemoryBudget.swift','Services/Voice/TalkModeController.swift','Services/Voice/TalkModeHotKey.swift','Models/Voice/TalkModeConfigurationStore.swift','Views/Voice/TalkModeSettingsTab.swift']:
     shutil.copy(core/f,src/Path(f).name)
 s=(core/'Managers/SpeechService.swift').read_text()
 (src/'SpeechWorker.swift').write_text('import Foundation\nimport AVFoundation\nimport os\n'+s[s.index('private enum TranscriptionUpdate: Sendable'):])
@@ -65,6 +65,8 @@ struct Agent: Identifiable { static let defaultId = UUID(uuidString: "00000000-0
 }
 enum AssistantDeltaEvent { case delta(turnId: UUID, text: String), finished, cancelled }
 @MainActor final class ChatSession {
+    var selectedModel: String? = nil
+    var selectedModelIsLocal = false
     var isAvailableForDispatchReattachment = true
     var lastStreamError: String?
     let subject = PassthroughSubject<AssistantDeltaEvent, Never>()
@@ -97,6 +99,16 @@ enum AssistantDeltaEvent { case delta(turnId: UUID, text: String), finished, can
     var state = State.idle
     func pause() async {}
     func resumeAfterChat() async {}
+}
+enum SpeechModelMemory {
+    @MainActor static func talkComponents() async -> [TalkMemoryBudget.Component] { [] }
+}
+actor ModelRuntime {
+    static let shared = ModelRuntime()
+    func talkMemoryDecision(modelName: String?, local: Bool, auxiliary: [TalkMemoryBudget.Component]) -> TalkMemoryBudget.Decision {
+        TalkMemoryBudget.assess(.init(physicalBytes: 32 << 30, comfortableBytes: 0,
+            availableBytes: nil, reserveBytes: 0, components: auxiliary))
+    }
 }
 @MainActor final class SpeechService {
     static let shared = SpeechService()
