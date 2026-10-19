@@ -253,6 +253,14 @@ public enum SettingsSearchIndex {
             keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
         ),
         .init(
+            id: "settings.chat.animatedAvatar",
+            tab: .chat,
+            section: "Appearance",
+            title: "Show animated avatar",
+            keywords: ["dinosaur", "mascot", "companion", "floating panel", "lip sync", "animation"],
+            disambiguation: "Global animated companion and empty-chat avatar. Agent mascot color and custom images are chosen under Agents."
+        ),
+        .init(
             id: "settings.chat.smoothStreaming",
             tab: .chat,
             section: "Appearance",
