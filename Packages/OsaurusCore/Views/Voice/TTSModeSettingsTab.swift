@@ -154,6 +154,9 @@ struct TTSModeSettingsTab: View {
                 if case .downloading(let fraction) = ttsService.modelState {
                     downloadProgressBar(fraction: fraction)
                 }
+                Text("PocketTTS v2.1 (English). Reuses a complete shared cache. Older or incomplete packs need a one-time download; existing model folders are kept.")
+                    .font(.caption)
+                    .foregroundColor(theme.secondaryText)
             }
         }
     }
@@ -173,7 +176,7 @@ struct TTSModeSettingsTab: View {
 
     private var modelStatusText: String {
         switch ttsService.modelState {
-        case .notReady: return L("Not downloaded — about 700 MB")
+        case .notReady: return L("Not downloaded — PocketTTS v2.1 English")
         case .downloading(let fraction):
             if let fraction {
                 return String(format: "%@ %d%%", L("Downloading"), Int(fraction * 100))

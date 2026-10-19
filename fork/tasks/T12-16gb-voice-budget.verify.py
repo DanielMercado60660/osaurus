@@ -28,9 +28,14 @@ struct AsrModels: Sendable {
     }
 }
 enum ModelNames {
-    enum ASR { static let requiredModels = ["v2.mlmodelc"]; static let requiredModelsV3 = ["v3.mlmodelc"] }
+    enum ASR { static let requiredModels = ["v2.mlmodelc"]; static func requiredModelsV3() -> [String] { ["v3.mlmodelc"] } }
     enum VAD { static let requiredModels = ["vad.mlmodelc"] }
     enum PocketTTS { static let requiredModels = ["tts.mlmodelc", "constants_bin"] }
+}
+enum PocketTTSResources {
+    static func requiredArtifacts(in directory: URL) -> [URL] {
+        ModelNames.PocketTTS.requiredModels.map { directory.appendingPathComponent($0) }
+    }
 }
 enum MLModelConfigurationUtils {
     enum Repo { case vad }

@@ -26,7 +26,8 @@ Voice → Transcription → **Enable Transcription Mode** turns on system-wide d
 ## Text-to-speech
 
 - Voice → Text-to-Speech: enable, pick a voice, and Preview. The engine (Pocket TTS or an OpenAI-compatible server) is under Advanced.
-- Default engine: On-Device (PocketTTS) — English, ~700 MB one-time download, offline afterwards; choose a voice (default `alba`).
+- Default engine: On-Device (PocketTTS) — English, one-time language-pack download, offline afterwards; choose a voice (default `alba`).
+- PocketTTS uses the English v2.1 pack with FluidAudio 0.15.4. Complete packs in `~/.cache/fluidaudio/Models/pocket-tts/v2.1/english/` are reused. If absent or incomplete (including old flat/v2 caches), **Download** prepares v2.1 under `~/.cache/osaurus/fluidaudio/Models/pocket-tts/v2.1/english/` with progress. Existing shared folders and precision variants are not removed. **Talk to it** uses the same preparation and progress state. Parakeet v2/v3 and Silero paths are unchanged.
 - Alternative: any OpenAI-compatible TTS server (`/v1/audio/speech`) — endpoint, model, voice, speed, optional API key (Keychain).
 - In chat, a speaker button appears on assistant messages when TTS is on; agents can also be granted a `speak` tool in the agent's Abilities settings.
 - Every dictation session and every spoken reply is recorded in Settings… (⌘,) → Insights (**Audio & Media** scope tab, **Transcription** / **Speech** rows). On-device work is **Local**; an OpenAI-compatible TTS server shows as **Cloud** with the text that was sent.

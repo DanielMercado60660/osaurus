@@ -7,7 +7,7 @@ enum SpeechModelMemory {
     static func sttRoots(modelID: String) -> [URL] {
         let version: AsrModelVersion = modelID == "v2" ? .v2 : .v3
         let directory = AsrModels.defaultCacheDirectory(for: version)
-        let names = version == .v3 ? ModelNames.ASR.requiredModelsV3 : ModelNames.ASR.requiredModels
+        let names = version == .v3 ? ModelNames.ASR.requiredModelsV3() : ModelNames.ASR.requiredModels
         return names.map { directory.appendingPathComponent($0) }
     }
     static var vadRoots: [URL] {
@@ -15,7 +15,7 @@ enum SpeechModelMemory {
         return ModelNames.VAD.requiredModels.map { directory.appendingPathComponent($0) }
     }
     static func ttsRoots(directory: URL) -> [URL] {
-        ModelNames.PocketTTS.requiredModels.map { directory.appendingPathComponent($0) }
+        PocketTTSResources.requiredArtifacts(in: directory)
     }
 
     @MainActor

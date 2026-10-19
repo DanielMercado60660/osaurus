@@ -336,11 +336,9 @@ let package = Package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
             revision: "f9f5e0aa9e042f006ee6a948f28d835b3e065ea6"
         ),
-        // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
-        // calls that osaurus's `TTSService` doesn't pass. Pinning to the
-        // last working version until osaurus catches up. Bumping requires
-        // a paired osaurus-side TTSService update.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", "0.14.0" ..< "0.14.2"),
+        // Match the owner's FluidAudio project and PocketTTS v2.1 cache.
+        // Keep loading, readiness, residency and benchmark paths in step.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.4"),
         // VecturaKit 6.x keeps embedding providers out of the core package.
         // Osaurus supplies its embedder from vmlx-swift so the app graph does
         // not pull a second transformer/embedding stack.

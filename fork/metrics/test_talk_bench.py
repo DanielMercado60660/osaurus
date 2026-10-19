@@ -23,15 +23,45 @@ class TalkBenchTests(unittest.TestCase):
             for name in ("Preprocessor.mlmodelc", "Encoder.mlmodelc", "Decoder.mlmodelc", "JointDecisionv3.mlmodelc", "parakeet_vocab.json"):
                 path = models / "parakeet-tdt-0.6b-v3" / name
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.touch()
+                (path.touch() if name.endswith(".json") else path.mkdir())
             path = models / "silero-vad/silero-vad-unified-256ms-v6.0.0.mlmodelc"
             path.parent.mkdir(parents=True)
-            path.touch()
+            path.mkdir()
+            for name in bench.POCKET_REQUIRED:
+                path = home / ".cache/fluidaudio/Models/pocket-tts/v2.1/english" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.mkdir()
+            self.assertEqual(len(bench.require_models(home)), 3)
+
+    def test_pocket_shared_preferred_and_owned_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            shared = home / ".cache/fluidaudio/Models/pocket-tts/v2.1/english"
+            owned = home / ".cache/osaurus/fluidaudio/Models/pocket-tts/v2.1/english"
+            for name in bench.POCKET_REQUIRED:
+                (owned / name).mkdir(parents=True)
+            self.assertTrue(all(p.parent == owned for p in bench.pocket_model_paths(home)))
+            for name in bench.POCKET_REQUIRED:
+                (shared / name).mkdir(parents=True)
+            self.assertTrue(all(p.parent == shared for p in bench.pocket_model_paths(home)))
+            (shared / "cond_prefill.mlmodelc").rmdir()
+            self.assertTrue(all(p.parent == owned for p in bench.pocket_model_paths(home)))
+
+    def test_pocket_old_partial_and_files_are_not_ready(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            repo = home / ".cache/fluidaudio/Models/pocket-tts"
             for name in ("cond_step.mlmodelc", "flowlm_step.mlmodelc", "flow_decoder.mlmodelc", "mimi_decoder_v2.mlmodelc", "constants_bin"):
-                path = home / ".cache/fluidaudio/Models/pocket-tts" / name
+                (repo / name).mkdir(parents=True)
+            # Even all the new names as plain files cannot pass the directory probe.
+            for name in bench.POCKET_REQUIRED:
+                path = repo / "v2.1/english" / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.touch()
-            self.assertEqual(len(bench.require_models(home)), 3)
+            with self.assertRaises(ValueError) as caught:
+                bench.require_models(home)
+            self.assertIn("v2.1/english/cond_prefill.mlmodelc", str(caught.exception))
+            self.assertTrue((repo / "cond_step.mlmodelc").is_dir())
 
     def test_isolated_configuration_preserves_model_defaults(self):
         with tempfile.TemporaryDirectory() as temporary:
