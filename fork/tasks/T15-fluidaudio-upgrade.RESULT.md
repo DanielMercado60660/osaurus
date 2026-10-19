@@ -159,7 +159,7 @@ already-present model snapshot for both:
 
 ```sh
 MODEL_ID=mlx-community/Qwen3.5-4B-4bit
-MODEL_DIR=/Users/danielmercado/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c
+MODEL_DIR=~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c
 
 # In the preserved BEFORE source checkout, with its original flat-cache preflight:
 LABEL=t15-before APP_SOURCE_SHA=902d48f7e \

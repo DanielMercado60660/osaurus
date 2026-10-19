@@ -64,7 +64,7 @@ git commit -m "Add phone model picker and no-model retry recovery"
 Both `git add` and `git commit` failed with exit 128:
 
 ```text
-fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T14-phone-model-picker/index.lock': Operation not permitted
+fatal: Unable to create '<repo>/.git/worktrees/T14-phone-model-picker/index.lock': Operation not permitted
 ```
 
 The shared worktree Git metadata lies outside this task's writable roots. No commit was created, no other branches/worktrees/remotes were changed, and all six files remain in this worktree for the host-side commit. Approval escalation is unavailable in this session.

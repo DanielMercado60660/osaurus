@@ -16,7 +16,7 @@ Status: **PARTIAL — implementation and isolated verification complete; commit 
   in a `set -e` shell. Staging failed:
 
   ```text
-  fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T13b-screen-hardening/index.lock': Operation not permitted
+  fatal: Unable to create '<repo>/.git/worktrees/T13b-screen-hardening/index.lock': Operation not permitted
   ```
 
   The commit command did not run. No alternate index/metadata or sandbox bypass

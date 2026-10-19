@@ -17,7 +17,7 @@ Status: **PARTIAL — implementation committed and isolated checks passed; full 
   token/s, physical footprint, first-audio latency and acoustic results are
   **not measured**. There are no live passing model rows.
 - Read preamble, AGENTS, task spec, T04/T04b/T03 RESULT files. The referenced
-  `/Users/danielmercado/AGENTS.md` does not exist. No subagents, push, other
+  `~/AGENTS.md` does not exist. No subagents, push, other
   worktree edits, software installs, logins or live permission grants.
 
 ## Built

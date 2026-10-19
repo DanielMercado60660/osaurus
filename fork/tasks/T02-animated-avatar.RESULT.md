@@ -190,7 +190,7 @@ The actual playback meter needs T01, as explicitly required by the spec.
 **BLOCKED.** Staging the task files failed:
 
 ```
-fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T02-animated-avatar/index.lock': Operation not permitted
+fatal: Unable to create '<repo>/.git/worktrees/T02-animated-avatar/index.lock': Operation not permitted
 ```
 
 The linked worktree's Git metadata is outside the sandbox's writable roots.

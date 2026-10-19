@@ -3,8 +3,8 @@
 [Load] residency_models=1 target_bytes=17179869260 applied=true
 [Load] Model residency requested=true target_bytes=17179869260 weight_bytes=76 working_set_bytes=55662788608 applied=true
 [Load] wire_budget model_bytes=76 est_generation_bytes=2684354636 user_wire_limit=56349970923 gpu_wired_limit=unknown wired_at_load=6189219840 headroom=50160751083 shortfall=0 residency_target=17179869260 wire_rejections_total=0
-[SafetensorsStorageHealer] event=disabled reason=opt_in_required path="/Users/danielmercado/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c"
-[mlx.safetensors.mmap] realigned 1221 unaligned tensor(s) (3034147328 bytes) without shard fallback file=/Users/danielmercado/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c/model.safetensors
+[SafetensorsStorageHealer] event=disabled reason=opt_in_required path="~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c"
+[mlx.safetensors.mmap] realigned 1221 unaligned tensor(s) (3034147328 bytes) without shard fallback file=~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c/model.safetensors
 [ModelRuntime] model_loaded model=qwen3.5-4b-4bit elapsedMs=895
 [QwenGDN] live_dtype_boundaries q=bfloat16 k=bfloat16 v=bfloat16 a=bfloat16 b=bfloat16 beta=fused_from_bfloat16 decay=float32 recurrent_state=float32 output=bfloat16
 [Qwen4Exp] fused_gdn_decode_input_projections=active dtype=bfloat16

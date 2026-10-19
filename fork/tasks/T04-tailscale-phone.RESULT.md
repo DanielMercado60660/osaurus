@@ -9,7 +9,7 @@ Status: **PARTIAL — implementation and isolated checks complete; full build/li
 - Existing vMLX pin unchanged: `f9f5e0aa9e042f006ee6a948f28d835b3e065ea6`.
 - Go 1.26.2, Apple Swift 6.4, macOS SDK 27.0. Helper dependency: `tailscale.com v1.94.2`, with `go.sum` checked into the proposed change.
 - No model was loaded; model bundle, generation defaults, token/s, acoustic and inference scores are **not applicable/unproven**. No agent-loop implementation or sampling defaults were changed.
-- Read worktree `AGENTS.md`. Its referenced `/Users/danielmercado/AGENTS.md` does not exist.
+- Read worktree `AGENTS.md`. Its referenced `~/AGENTS.md` does not exist.
 - No Tailscale process was brought up, no login was attempted, and no service/account authentication was performed. Network use was limited to Go/SwiftPM dependency resolution. No system software was installed; no push, remote change, branch switch, or other-worktree source edit was performed.
 
 ## Implemented files and behavior
@@ -60,7 +60,7 @@ A fresh Release app was not produced or launched. Actual `make app` embedding/si
 Attempted normal `git add` on the implementation files. Git failed:
 
 ```
-fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T04-tailscale-phone/index.lock': Operation not permitted
+fatal: Unable to create '<repo>/.git/worktrees/T04-tailscale-phone/index.lock': Operation not permitted
 ```
 
 Evidence: `build/t04/git-add.log`. This worktree's Git metadata is outside the permitted write roots. There is no allowed approval escalation in this session. The requested commit therefore could not be created; changes remain unstaged in this worktree. No workaround modified another repository's metadata or branch. Once the environment permits this worktree's index/object/ref writes, stage the implementation and this RESULT file and commit on `task/T04-tailscale-phone` (do not push).

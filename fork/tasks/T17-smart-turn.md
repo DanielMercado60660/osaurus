@@ -21,7 +21,7 @@ features, output 1 logit, threshold 0.5; converted from
 reading the JSON header is fine) to get the exact architecture/weight names.
 References:
 - the owner's Rust port of the feature extraction:
-  `/Users/danielmercado/mama-mei-v2/crates/operator-voice/src/smart_turn.rs`
+  `~/mama-mei-v2/crates/operator-voice/src/smart_turn.rs`
   (read-only; it's another project);
 - any MLX/Python reference implementation present on disk (e.g. an
   `mlx-audio` install or HF cache), otherwise the upstream model card.

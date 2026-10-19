@@ -1,3 +1,10 @@
+> **This is a fork of [osaurus](https://github.com/osaurus-ai/osaurus)** that adds a
+> hands-free **talk mode** (≈1.1 s from end of speech to first audio, measured
+> headless), an animated **desktop companion**, **phone access over Tailscale**
+> (chat, voice, screen view), always-on reachability, and 16 GB tuning.
+> See **[fork/README.md](fork/README.md)** for what's added, how to build it, and
+> what is and isn't verified. Work in progress.
+
 <p align="center">
 <img width="1920" height="1080" alt="osaurus-techcrunch-1" src="https://github.com/user-attachments/assets/d7905005-71fe-41ba-b69f-e8968af29b5c" />
 </p>

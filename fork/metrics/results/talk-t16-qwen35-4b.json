@@ -5,7 +5,7 @@
   "evidence": "Software latency through real models and paced null audio. Not acoustic or release proof.",
   "checkout_sha": "a4dccb8a36455399547d5e00ec1eadcb9034a104",
   "app_source_sha": "unverified: set APP_SOURCE_SHA to the app's actual build SHA",
-  "app": "/Users/danielmercado/osaurus-fork/build/DerivedData/Build/Products/Release/osaurus.app",
+  "app": "<repo>/build/DerivedData/Build/Products/Release/osaurus.app",
   "app_executable_sha256": "32d25dde60c667957751dcc83521beb6e831f06422c1d0d535396593db9a9f58",
   "checkout_vmlx_pin": [
     {
@@ -29,7 +29,7 @@
     }
   ],
   "model": "mlx-community/Qwen3.5-4B-4bit",
-  "model_dir": "/Users/danielmercado/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
+  "model_dir": "~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-4B-4bit/snapshots/0e7ffd5c629ef7719d4cbc04069232580bfa9d9c",
   "model_config_sha256": "f3efc81b2ea8d96a45301037d3ccccbcccdef44a961845c87f286aaddbc6eaaa",
   "generation_config": null,
   "generation_overrides": {
@@ -38,21 +38,21 @@
   },
   "speech_resources": {
     "Parakeet TDT v3 (FluidInference/parakeet-tdt-0.6b-v3-coreml), Voice \u2192 Voice Setup": [
-      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/Preprocessor.mlmodelc",
-      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/Encoder.mlmodelc",
-      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/Decoder.mlmodelc",
-      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/JointDecisionv3.mlmodelc",
-      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/parakeet_vocab.json"
+      "~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/Preprocessor.mlmodelc",
+      "~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/Encoder.mlmodelc",
+      "~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/Decoder.mlmodelc",
+      "~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/JointDecisionv3.mlmodelc",
+      "~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3/parakeet_vocab.json"
     ],
     "Silero VAD (FluidInference/silero-vad-coreml), loaded with Voice Setup": [
-      "/Users/danielmercado/Library/Application Support/FluidAudio/Models/silero-vad/silero-vad-unified-256ms-v6.0.0.mlmodelc"
+      "~/Library/Application Support/FluidAudio/Models/silero-vad/silero-vad-unified-256ms-v6.0.0.mlmodelc"
     ],
     "PocketTTS v2.1 English (FluidInference/pocket-tts-coreml), Voice \u2192 Text To Speech": [
-      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/cond_prefill.mlmodelc",
-      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/flowlm_step.mlmodelc",
-      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/flow_decoder_fused.mlmodelc",
-      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/mimi_decoder.mlmodelc",
-      "/Users/danielmercado/.cache/fluidaudio/Models/pocket-tts/v2.1/english/constants_bin"
+      "~/.cache/fluidaudio/Models/pocket-tts/v2.1/english/cond_prefill.mlmodelc",
+      "~/.cache/fluidaudio/Models/pocket-tts/v2.1/english/flowlm_step.mlmodelc",
+      "~/.cache/fluidaudio/Models/pocket-tts/v2.1/english/flow_decoder_fused.mlmodelc",
+      "~/.cache/fluidaudio/Models/pocket-tts/v2.1/english/mimi_decoder.mlmodelc",
+      "~/.cache/fluidaudio/Models/pocket-tts/v2.1/english/constants_bin"
     ]
   },
   "tts": {
@@ -63,22 +63,22 @@
   "inputs": [
     {
       "question": "Why is the sky blue? Explain it in five sentences.",
-      "wav": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t16-qwen35-4b-6cacosjt/input-0.wav",
+      "wav": "$TMPDIR/osaurus-talk-t16-qwen35-4b-6cacosjt/input-0.wav",
       "sha256": "95b1cdd9b69d4dbc8136caa119e7cd513a3884e7e272ed2104b2f883e9879396"
     },
     {
       "question": "What's the capital of France?",
-      "wav": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t16-qwen35-4b-6cacosjt/input-1.wav",
+      "wav": "$TMPDIR/osaurus-talk-t16-qwen35-4b-6cacosjt/input-1.wav",
       "sha256": "9dc2cceffeda8c5d165c83e635c026467c275b847a98028e992f7f06868eec77"
     },
     {
       "question": "What is seven plus eight?",
-      "wav": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t16-qwen35-4b-6cacosjt/input-2.wav",
+      "wav": "$TMPDIR/osaurus-talk-t16-qwen35-4b-6cacosjt/input-2.wav",
       "sha256": "aee5b403f09da642065504a143ead4057117d89bfe59ac035c30457b190cfbe3"
     },
     {
       "question": "Which is the largest ocean on Earth?",
-      "wav": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t16-qwen35-4b-6cacosjt/input-3.wav",
+      "wav": "$TMPDIR/osaurus-talk-t16-qwen35-4b-6cacosjt/input-3.wav",
       "sha256": "c8df3df46be4c91dc05602ee4989df048e84944c9c3ca4912558081252ef28ed"
     }
   ],
@@ -233,7 +233,7 @@
         "speechEnd": 1013314.7955323334
       }
     ],
-    "evidence_root": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t16-qwen35-4b-6cacosjt/baseline",
+    "evidence_root": "$TMPDIR/osaurus-talk-t16-qwen35-4b-6cacosjt/baseline",
     "barge_in_after_ms": null
   },
   "barge_in": {
@@ -360,7 +360,7 @@
         "speechEnd": 1013379.4461626251
       }
     ],
-    "evidence_root": "/var/folders/hw/1f2nk_wx3z7_65gj03t37j6w0000gn/T/osaurus-talk-t16-qwen35-4b-6cacosjt/barge-in",
+    "evidence_root": "$TMPDIR/osaurus-talk-t16-qwen35-4b-6cacosjt/barge-in",
     "barge_in_after_ms": 800
   }
 }

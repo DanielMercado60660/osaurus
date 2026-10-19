@@ -127,11 +127,11 @@ the standalone probe. Evidence is local/gitignored.
 
    ```sh
    python3 fork/tasks/T17-smart-turn.build-probe.py --features-only
-   /Users/danielmercado/mama-mei-v2/sidecars/.venv/bin/python -I \
+   ~/mama-mei-v2/sidecars/.venv/bin/python -I \
      fork/tasks/T17-smart-turn.golden.py --features-only \
      --probe build/T17/features-probe \
-     --model /Users/danielmercado/.cache/huggingface/hub/models--mlx-community--smart-turn-v3/snapshots/74af1538ebace37b0fcc667a6a8a3d902d73eee0 \
-     --fixture-source /Users/danielmercado/mama-mei-v2/crates/operator-voice/assets/speech_fixture.wav \
+     --model ~/.cache/huggingface/hub/models--mlx-community--smart-turn-v3/snapshots/74af1538ebace37b0fcc667a6a8a3d902d73eee0 \
+     --fixture-source ~/mama-mei-v2/crates/operator-voice/assets/speech_fixture.wav \
      --workdir build/T17/feature-final
    ```
 
@@ -152,7 +152,7 @@ the standalone probe. Evidence is local/gitignored.
 
    ```sh
    python3 fork/tasks/T17-smart-turn.build-probe.py \
-     --derived-data /Users/danielmercado/osaurus-fork/build/DerivedData
+     --derived-data <repo>/build/DerivedData
    ```
 
    It compiles the actual feature/model sources and links existing Release
@@ -162,9 +162,9 @@ the standalone probe. Evidence is local/gitignored.
 
    ```sh
    swiftc -typecheck -swift-version 6 -module-cache-path build/ModuleCache \
-     -I /Users/danielmercado/osaurus-fork/build/DerivedData/Build/Products/Release \
-     -I /Users/danielmercado/osaurus-fork/build/DerivedData/SourcePackages/checkouts/vmlx-swift/Source/Cmlx/include \
-     -I /Users/danielmercado/osaurus-fork/build/DerivedData/SourcePackages/checkouts/swift-numerics/Sources/_NumericsShims/include \
+     -I <repo>/build/DerivedData/Build/Products/Release \
+     -I <repo>/build/DerivedData/SourcePackages/checkouts/vmlx-swift/Source/Cmlx/include \
+     -I <repo>/build/DerivedData/SourcePackages/checkouts/swift-numerics/Sources/_NumericsShims/include \
      Packages/OsaurusCore/Services/Voice/SmartTurn/SmartTurnModel.swift \
      Packages/OsaurusCore/Services/Voice/SmartTurn/SmartTurnFeatures.swift \
      Packages/OsaurusCore/Services/Voice/SmartTurn/SmartTurnService.swift \

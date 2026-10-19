@@ -10,7 +10,7 @@ Status: **PARTIAL — F1–F6 implemented and isolated checks passed; commit blo
 - `git add -A -- <implementation files>` and `git -c commit.gpgsign=false commit -m "Harden Tailscale phone access authorization and helper launch"` both failed with:
 
   ```text
-  fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T04b-phone-access-hardening/index.lock': Operation not permitted
+  fatal: Unable to create '<repo>/.git/worktrees/T04b-phone-access-hardening/index.lock': Operation not permitted
   ```
 
   The working files remain in place, unstaged. No alternate metadata/index, branch, worktree, or permission workaround was used. Diagnostic recorded in `build/t04b/commit-failure.txt`. Once normal Git metadata access is available, stage these changes plus this RESULT and commit on this branch; do not push.

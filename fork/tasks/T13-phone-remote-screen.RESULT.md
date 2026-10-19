@@ -15,7 +15,7 @@ Status: **PARTIAL — implementation and isolated checks complete; commit blocke
   Staging failed, so the chained commit did not execute:
 
   ```text
-  fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T13-phone-remote-screen/index.lock': Operation not permitted
+  fatal: Unable to create '<repo>/.git/worktrees/T13-phone-remote-screen/index.lock': Operation not permitted
   ```
 
   All changes remain in this worktree, unstaged. There is no approval escalation

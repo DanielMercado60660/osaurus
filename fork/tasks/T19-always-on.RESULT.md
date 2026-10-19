@@ -90,7 +90,7 @@ git -c commit.gpgsign=false commit -m "Keep phone access reachable across login,
 The shell used `&&`, and staging failed, so the commit command did not execute:
 
 ```text
-fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T19-always-on/index.lock': Operation not permitted
+fatal: Unable to create '<repo>/.git/worktrees/T19-always-on/index.lock': Operation not permitted
 ```
 
 Evidence: `build/T19/commit.log`. This worktree's shared Git metadata is outside

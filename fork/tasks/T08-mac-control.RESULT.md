@@ -5,7 +5,7 @@ Status: **PARTIAL validation**. Scoped implementation and isolated checks are co
 **Commit not created.** `git add -A` failed before staging with:
 
 ```text
-fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T08-mac-control/index.lock': Operation not permitted
+fatal: Unable to create '<repo>/.git/worktrees/T08-mac-control/index.lock': Operation not permitted
 ```
 
 The sandbox denied the worktree Git metadata write. All implementation, tests,

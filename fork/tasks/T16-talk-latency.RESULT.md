@@ -172,7 +172,7 @@ Both `git add -A` and `git commit -m "Add talk latency stages and bundle-aware
 thinking preference"` failed with:
 
 ```
-fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T16-talk-latency/index.lock': Operation not permitted
+fatal: Unable to create '<repo>/.git/worktrees/T16-talk-latency/index.lock': Operation not permitted
 ```
 
 The worktree's backing Git metadata lies outside the sandbox's writable roots.

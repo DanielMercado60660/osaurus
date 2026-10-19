@@ -102,7 +102,7 @@ cadence, microphone VAD, and complete Chat/Settings UI/relaunch proof are
 or OsaurusEvals model lanes were run. `AssistantDeltaObservationTests` is included
 and passed in the integrated focused lane. No system software installed,
 no push, no remote changes, and no other worktrees modified. Root `AGENTS.md`
-was read; the referenced `/Users/danielmercado/AGENTS.md` does not exist.
+was read; the referenced `~/AGENTS.md` does not exist.
 
 A chained `git add` was denied access to the worktree index; the standalone
 `git add` invocation succeeded. No permission escalation was requested.

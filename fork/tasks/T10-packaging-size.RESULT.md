@@ -10,7 +10,7 @@ by filesystem permissions; actual app archive/DMG and live proof unverified.**
 - No commit was created. Both staging and committing failed with:
 
   ```text
-  fatal: Unable to create '/Users/danielmercado/osaurus-fork/.git/worktrees/T10-packaging-size/index.lock': Operation not permitted
+  fatal: Unable to create '<repo>/.git/worktrees/T10-packaging-size/index.lock': Operation not permitted
   ```
 
 - Changes remain unstaged in this worktree. No alternate index, metadata path,
