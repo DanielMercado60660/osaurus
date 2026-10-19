@@ -1011,6 +1011,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleMCPCallTool(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/messages" {
                 handleAnthropicMessages(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/audio/speech" {
+                handleAudioSpeech(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/audio/transcriptions" {
                 handleAudioTranscriptions(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/responses" || path == "/v1/responses" {
@@ -3681,6 +3683,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// ever carry a small JSON envelope.
     private func bodyByteLimit(for head: HTTPRequestHead) -> Int {
         let path = normalize(extractPath(from: head.uri))
+        if path == "/audio/speech" {
+            return min(configuration.maxRequestBodyBytes, AudioSpeechRequest.maximumBodyBytes)
+        }
         if path == "/pair" || path == "/pair/code" || path == "/pair/confirm" || path == "/pair-invite"
             || path == "/secure/session"
         {
@@ -17573,6 +17578,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private func executeOnLoop(_ loop: EventLoop, _ block: @escaping @Sendable () -> Void) {
         guard _isChannelActive.value else { return }
         if loop.inEventLoop { block() } else { loop.execute { block() } }
+    }
+
+    // MARK: - Speech synthesis (owner / trusted phone only)
+
+    private func handleAudioSpeech(
+        head: HTTPRequestHead, context: ChannelHandlerContext,
+        startTime: Date, userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: "/audio/speech",
+                startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let data = stateRef.value.requestBodyBuffer.map { Data($0.readableBytesView) } ?? Data()
+        let writer = AudioSpeechWriter(context: context, version: head.version, cors: stateRef.value.corsHeaders)
+        let contentType = head.headers.first(name: "Content-Type")?.split(separator: ";").first?
+            .trimmingCharacters(in: .whitespaces).lowercased()
+        runRequestTask(priority: .userInitiated) {
+            do {
+                guard contentType == "application/json" else {
+                    throw AudioSpeechError.invalid("Expected Content-Type: application/json.")
+                }
+                let request = try AudioSpeechRequest.parse(data)
+                try await TTSService.shared.synthesizeForAPI(request) { samples in
+                    try await writer.write(samples, format: request.format)
+                }
+                try await writer.finish()
+            } catch {
+                await writer.fail(error)
+            }
+        }
     }
 
     // MARK: - Audio Transcriptions (OpenAI Whisper API Compatible)

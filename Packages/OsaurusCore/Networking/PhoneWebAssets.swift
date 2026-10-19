@@ -7,6 +7,7 @@ enum PhoneWebAssets {
         let type: String
         switch path {
         case "/phone", "/phone/": name = "phone-index"; type = "text/html; charset=utf-8"
+        case "/phone/voice.js": name = "phone-voice"; type = "text/javascript; charset=utf-8"
         case "/phone/app.js": name = "phone-app"; type = "text/javascript; charset=utf-8"
         case "/phone/style.css": name = "phone-style"; type = "text/css; charset=utf-8"
         case "/phone/manifest.webmanifest": name = "phone-manifest"; type = "application/manifest+json"
@@ -14,11 +15,11 @@ enum PhoneWebAssets {
         case "/phone/icon-512.png": name = "phone-icon-512"; type = "image/png"
         case "/phone/icon.svg": name = "phone-icon"; type = "image/svg+xml"
         case "/phone/sw.js": name = "phone-sw"; type = "text/javascript; charset=utf-8"
-        case "/phone/capabilities": return (Data(#"{"transcription":true,"speech":false}"#.utf8), "application/json")
+        case "/phone/capabilities": return (Data(#"{"transcription":true,"speech":true}"#.utf8), "application/json")
         default: return nil
         }
         let ext = [
-            "phone-index": "html", "phone-app": "js", "phone-style": "css",
+            "phone-voice": "js", "phone-index": "html", "phone-app": "js", "phone-style": "css",
             "phone-icon-192": "png", "phone-icon-512": "png",
             "phone-manifest": "webmanifest", "phone-icon": "svg", "phone-sw": "js",
         ][name]!
