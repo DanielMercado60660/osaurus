@@ -319,9 +319,22 @@ public final class ActivityLogStore: @unchecked Sendable {
     /// the chained copy. Serialised on the store queue so the chain is
     /// consistent regardless of caller interleaving.
     @discardableResult
-    func append(_ input: RequestLog) throws -> RequestLog {
+    func append(_ input: RequestLog, durable: Bool = false) throws -> RequestLog {
         try queue.sync {
             guard db != nil else { throw ActivityLogStoreError.notOpen }
+            // Security-sensitive egress waits for WAL synchronization, not only
+            // SQLite's default NORMAL commit. Preserve the caller's prior mode.
+            var previousSync: Int32?
+            if durable {
+                try executeRaw("PRAGMA synchronous") { stmt in
+                    if sqlite3_step(stmt) == SQLITE_ROW { previousSync = sqlite3_column_int(stmt, 0) }
+                }
+                guard previousSync != nil else { throw ActivityLogStoreError.failedToExecute("Cannot read synchronous mode") }
+                try executeRaw("PRAGMA synchronous = FULL")
+            }
+            defer {
+                if let previousSync { try? executeRaw("PRAGMA synchronous = \(previousSync)") }
+            }
             let tail = try currentTail()
             var record = Self.boundedDetails(input)
             record.seq = tail.seq + 1

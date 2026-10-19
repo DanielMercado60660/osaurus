@@ -12,6 +12,7 @@ final class TailscalePhoneAccessService: ObservableObject {
     @Published private(set) var allowedDeviceIDs: Set<String>
     @Published private(set) var devices: [PhoneAccessDevice]
     private let defaults: UserDefaults
+    private let screen: @MainActor () -> PhoneScreenService
     private var process: Process?
     private var input: Pipe?
     private var output: Pipe?
@@ -21,7 +22,8 @@ final class TailscalePhoneAccessService: ObservableObject {
     private var retiringProcesses: [Process] = []
     private var restartTask: Task<Void, Never>?
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, screen: @escaping @MainActor () -> PhoneScreenService = { .shared }) {
+        self.screen = screen
         self.defaults = defaults
         enabled = defaults.bool(forKey: "phoneAccess.enabled")
         allowedLogins = defaults.string(forKey: "phoneAccess.allowedLogins") ?? ""
@@ -33,7 +35,12 @@ final class TailscalePhoneAccessService: ObservableObject {
 
     func setEnabled(_ value: Bool) {
         enabled = value; defaults.set(value, forKey: "phoneAccess.enabled")
-        if value { startIfEnabled() } else { stop() }
+        if value { startIfEnabled() } else {
+            defaults.set(false, forKey: "phoneAccess.allowScreenViewing")
+            defaults.removeObject(forKey: "phoneAccess.screenLastUsed")
+            screen().setAllowed(false)
+            stop()
+        }
     }
 
     func saveAllowedLogins(_ value: String) {
@@ -69,7 +76,7 @@ final class TailscalePhoneAccessService: ObservableObject {
         generation = UUID()
         restartTask?.cancel(); restartTask = nil
         PhoneAccessTrust.shared.replace(with: nil)
-        PhoneScreenService.shared.stopViewing()
+        screen().stopViewing()
         output?.fileHandleForReading.readabilityHandler = nil
         try? input?.fileHandleForWriting.close()
         if let child = process, child.isRunning {
@@ -164,7 +171,12 @@ final class TailscalePhoneAccessService: ObservableObject {
             buffer.removeSubrange(...end)
             if let event = PhoneAccessStatus.parse(line) {
                 if let device = event.device { recordDevice(device) }
-                else { state.receive(event) }
+                else {
+                    state.receive(event)
+                    if event.type == "owner_login", let owner = event.value {
+                        PhoneAccessTrust.shared.setOwnerLogin(owner)
+                    }
+                }
             }
         }
         if buffer.count > 16_384 { stop(); state.fail("Invalid oversized helper status.") }

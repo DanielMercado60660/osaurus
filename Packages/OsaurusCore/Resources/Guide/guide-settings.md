@@ -268,8 +268,12 @@ responses do not grant cross-origin browser access. Only one app instance can
 hold the phone-access state directory lock at a time.
 
 **Allow phone to view this Mac's screen** is a separate, off-by-default switch
-in this card. It saves immediately and persists across relaunches. The card
-shows the current Screen Recording permission state; **Open Screen Recording
+in this card. Only devices signed in as the **tailnet node owner** can view the
+screen; other allowed logins can still chat. It saves immediately, resets to off
+when Phone access is turned off, and expires after **7 days unused**. Enabling it
+starts that interval; only a successful frame renews it. The card shows the
+expiry date. Relaunch preserves only an unexpired grant (old grants without a
+timestamp must be enabled again). The card shows the Screen Recording state; **Open Screen Recording
 Settings** opens the macOS pane. Grant Osaurus permission there (a relaunch may
 be required). Screen viewing does not grant Accessibility or enable Computer Use.
 
@@ -277,12 +281,22 @@ On the phone, choose **Screen** to view the Mac's main display. Tap the preview
 to enlarge and scroll it; use the browser's pinch zoom for detail. The page polls
 only while this panel and the page are visible. Returning to **Chat**, hiding the
 page, or leaving it aborts polling and clears the preview. The Mac displays
-**Phone is viewing your screen** in the menu bar while frames are requested; it
-expires about five seconds after the last frame. Turning off screen viewing or
-stopping Phone access removes it immediately and discards pending captures.
-Every screen request handled by the screen endpoint emits a metadata-only
-Insights activity row with the verified device StableID, outcome and byte count;
-pixels are not stored in Insights or chat artifacts.
+**Phone is viewing your screen** in the menu bar and in a floating overlay on the
+active display. These expire about five seconds after the last frame. A user
+notification is posted on the first successful frame per device/session and after
+an idle gap longer than 60 seconds; delivery follows macOS notification permissions.
+Turning off screen viewing or stopping Phone access removes both indicators
+immediately and discards pending captures.
+
+Screen capture requires a working durable Insights store. A metadata-only
+“screen view started (device …)” row must be committed before the first capture;
+ongoing sessions write at most one summary per minute with the preceding interval's
+frame and byte counts. These are session summaries, not exact per-frame receipts.
+Unavailable storage or append failure stops viewing with `audit_unavailable`.
+Unverified requests are rejected before the main actor and counted in at most one
+aggregate rejection row per minute. Verified rejection rows (including rate limits)
+are capped at one per device per minute. Pixels are not stored in Insights or chat
+artifacts.
 
 **Ask about this screen** uses the selected agent's normal streamed chat. In the
 Screen panel the picker lists only custom agents with effective **Tools** and

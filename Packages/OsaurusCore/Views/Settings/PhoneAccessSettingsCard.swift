@@ -29,6 +29,11 @@ struct PhoneAccessSettingsCard: View {
                     get: { screen.allowed }, set: { screen.setAllowed($0) }
                 ))
                 .settingsLandingAnchor("server.phoneAccess.screen")
+                .disabled(!service.enabled)
+                Text("Only devices signed in as this tailnet node’s owner can view the screen. Other allowed logins can chat. Turns off with Phone access or after 7 days unused.").font(.caption)
+                if let expires = screen.expiresAt, screen.allowed {
+                    Text("Screen access expires if unused: \(expires.formatted(date: .abbreviated, time: .shortened))").font(.caption)
+                }
                 Text("Screen Recording: \(screenPermission ? "Granted" : "Not granted")")
                     .font(.caption)
                 Button("Open Screen Recording Settings") {
@@ -37,7 +42,7 @@ struct PhoneAccessSettingsCard: View {
                     }
                 }
                 .settingsLandingAnchor("server.phoneAccess.screenPermission")
-                Text("The phone Screen panel shows the main display. A menu-bar indicator appears while viewing. Actions use a Computer Use agent and its existing approvals; keep a Mac chat window open for approval cards.")
+                Text("The phone Screen panel shows the main display. A floating overlay and menu-bar indicator appear while viewing; each session posts a notification. Actions use a Computer Use agent and its existing approvals; keep a Mac chat window open for approval cards.")
                     .font(.caption)
                 Text("Status: \(service.state.phase.rawValue)")
                 if let error = service.state.error { Text(error).foregroundStyle(.red) }
@@ -61,7 +66,7 @@ struct PhoneAccessSettingsCard: View {
                 Text(
                     "Comma-separated logins. Empty uses the login that owns this node. Every device signed in to an allowed login has owner access to this Mac's agents unless you restrict devices below. We recommend a tailnet ACL to limit which devices can reach this node."
                 ).font(.caption)
-                if let owner = service.state.ownerLogin { Text("Effective logins: \(owner)").font(.caption) }
+                if let owner = service.state.ownerLogin { Text("Tailnet node owner: \(owner)").font(.caption) }
                 Button("Save allowed logins") {
                     service.saveAllowedLogins(logins); logins = service.allowedLogins
                 }
@@ -101,9 +106,11 @@ struct PhoneAccessSettingsCard: View {
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            screen.refreshAvailability()
             screenPermission = SystemScreenshotPermissionChecker().hasScreenRecordingPermission()
         }
         .onAppear {
+            screen.refreshAvailability()
             screenPermission = SystemScreenshotPermissionChecker().hasScreenRecordingPermission()
             logins = service.allowedLogins
             restrictDevices = service.restrictDevices

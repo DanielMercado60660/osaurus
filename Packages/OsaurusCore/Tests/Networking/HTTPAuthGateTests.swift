@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import NIOEmbedded
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -16,6 +17,24 @@ import Testing
 @testable import OsaurusCore
 
 struct HTTPAuthGateTests {
+    /// Running synchronously on MainActor leaves no opportunity for a request
+    /// task to hop onto it. The 403 must already be in the embedded NIO output.
+    @MainActor @Test func unverifiedScreenRejectsOnEventLoopWithoutActorHop() throws {
+        let channel = EmbeddedChannel()
+        try channel.pipeline.syncOperations.addHandler(HTTPHandler(
+            configuration: .default, apiKeyValidator: .empty,
+            eventLoop: channel.eventLoop, trustLoopback: true))
+        try channel.writeInbound(HTTPServerRequestPart.head(HTTPRequestHead(
+            version: .http1_1, method: .GET, uri: "/phone/api/screen")))
+        try channel.writeInbound(HTTPServerRequestPart.end(nil))
+        let part = try #require(channel.readOutbound(as: HTTPServerResponsePart.self))
+        guard case .head(let head) = part else { Issue.record("expected immediate response head"); return }
+        #expect(head.status == .forbidden)
+        #expect(head.headers.first(name: "Cache-Control") == "no-store")
+        #expect(head.headers.first(name: "Access-Control-Allow-Origin") == nil)
+        _ = try? channel.finish()
+    }
+
 
     // MARK: - Public Paths Bypass Auth
 

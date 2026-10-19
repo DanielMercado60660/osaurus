@@ -4735,33 +4735,45 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             physicalLoopback: context.channel.remoteAddress?.isLoopback ?? false,
             relay: stateRef.value.isRelayOrigin,
             hasAuthorization: head.headers.contains(name: "Authorization"),
-            secureChannel: stateRef.value.isSecureChannel
+            secureChannel: stateRef.value.isSecureChannel,
+            login: head.headers.first(name: PhoneAccessTrust.loginHeader)
         )
+        // This predicate and the rejection response run on the NIO event loop.
+        // No request Task / MainActor hop or per-request audit for untrusted traffic.
+        guard caller.verifiedDevice(using: .shared) != nil else {
+            PhoneScreenRejections.shared.reject()
+            writePhoneScreen(.error(403, "phone_owner_required", "Screen access requires the verified tailnet node owner."),
+                             head: head, context: context)
+            return
+        }
         let query = head.uri.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).dropFirst().first.map(String.init)
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         runRequestTask(priority: .userInitiated) {
             let result = await PhoneScreenService.shared.response(caller: caller, query: query, method: head.method.rawValue)
-            hop {
-                var headers = HTTPHeaders([
-                    ("Content-Type", result.contentType), ("Cache-Control", "no-store"),
-                    ("X-Content-Type-Options", "nosniff"), ("Connection", "close"),
-                    ("Content-Length", String(result.body.count)),
-                ])
-                if result.status == 429 { headers.add(name: "Retry-After", value: "1") }
-                if result.status == 405 { headers.add(name: "Allow", value: "GET") }
-                ctx.value.write(NIOAny(HTTPServerResponsePart.head(HTTPResponseHead(
-                    version: head.version, status: HTTPResponseStatus(statusCode: result.status), headers: headers))), promise: nil)
-                if head.method != .HEAD {
-                    var buffer = ctx.value.channel.allocator.buffer(capacity: result.body.count)
-                    buffer.writeBytes(result.body)
-                    ctx.value.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
-                }
-                let channel = ctx.value.channel
-                ctx.value.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil))).whenComplete { _ in channel.close(promise: nil) }
-            }
+            hop { self.writePhoneScreen(result, head: head, context: ctx.value) }
         }
+    }
+
+    private func writePhoneScreen(_ result: PhoneScreenResponse, head: HTTPRequestHead, context: ChannelHandlerContext) {
+        context.eventLoop.preconditionInEventLoop()
+        var headers = HTTPHeaders([
+            ("Content-Type", result.contentType), ("Cache-Control", "no-store"),
+            ("X-Content-Type-Options", "nosniff"), ("Connection", "close"),
+            ("Content-Length", String(result.body.count)),
+        ])
+        if result.status == 429 { headers.add(name: "Retry-After", value: "1") }
+        if result.status == 405 { headers.add(name: "Allow", value: "GET") }
+        context.write(NIOAny(HTTPServerResponsePart.head(HTTPResponseHead(
+            version: head.version, status: HTTPResponseStatus(statusCode: result.status), headers: headers))), promise: nil)
+        if head.method != .HEAD {
+            var buffer = context.channel.allocator.buffer(capacity: result.body.count)
+            buffer.writeBytes(result.body)
+            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+        }
+        let channel = context.channel
+        context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil))).whenComplete { _ in channel.close(promise: nil) }
     }
 
     // MARK: - Agents

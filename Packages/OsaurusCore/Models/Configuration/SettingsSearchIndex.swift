@@ -970,8 +970,8 @@ public enum SettingsSearchIndex {
         .init(
             id: "server.phoneAccess.screen", tab: .server, section: "Phone access over Tailscale",
             title: "Allow phone to view this Mac's screen",
-            keywords: ["phone", "screen", "remote screen", "screenshot", "tailscale"], subTab: "Overview",
-            disambiguation: "Opt-in screen preview for verified Tailscale phone owners. Separate from per-agent Computer Use and screen context."
+            keywords: ["phone", "screen", "remote screen", "screenshot", "tailscale", "owner", "screen expiry", "7 days", "screen overlay"], subTab: "Overview",
+            disambiguation: "Opt-in screen preview only for the tailnet node owner. Resets when Phone access is off and expires after 7 days unused. Requires durable Insights auditing. Separate from per-agent Computer Use and screen context."
         ),
         .init(
             id: "server.phoneAccess.screenPermission", tab: .server, section: "Phone access over Tailscale",
