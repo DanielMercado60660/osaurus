@@ -72,6 +72,28 @@ public final class TalkModeController: ObservableObject {
 
     func owns(_ session: ChatSession) -> Bool { isActive && self.session === session }
 
+    /// VAD pauses before delivering detection. Transfer responsibility for
+    /// resuming it even though its observable state is now idle.
+    func startFromWakeWord(agentID: UUID) {
+        shouldResumeVAD = true
+        // A late detection must never toggle off an existing talk session.
+        guard !isActive else { return }
+        toggle(agentID: agentID, withoutWindow: true)
+        if !isActive {
+            // Readiness/busy-session refusal must not strand wake listening.
+            avatarEvents.send((agentID, .reaction(.oops)))
+            Task { await resumeWakeListeningIfNeeded() }
+        }
+    }
+
+    private func resumeWakeListeningIfNeeded() async {
+        guard shouldResumeVAD, !isActive else { return }
+        await VADService.shared.resumeAfterChat()
+        // A new talk may start during VAD's audio-settle delay. Keep ownership
+        // in that case so its eventual stop can retry the guarded resume.
+        if !isActive { shouldResumeVAD = false }
+    }
+
     func toggle(agentID requestedAgentID: UUID? = nil, windowID requestedWindowID: UUID? = nil, withoutWindow: Bool = false) {
         if isStopping {
             restartWithoutWindow = withoutWindow
@@ -123,7 +145,7 @@ public final class TalkModeController: ObservableObject {
         TTSService.shared.stop()
         isStarting = true
         NotificationCenter.default.post(name: .talkModeWillStart, object: nil)
-        shouldResumeVAD = VADService.shared.state == .listening || VADService.shared.state == .starting
+        shouldResumeVAD = shouldResumeVAD || VADService.shared.state == .listening || VADService.shared.state == .starting
         let duplex = TalkAudioEngine()
         let gate = TalkSpeechGate(silenceMs: configuration.endOfTurnSilenceMs)
         self.duplex = duplex
@@ -195,14 +217,13 @@ public final class TalkModeController: ObservableObject {
             self.agentID = nil
             self.windowID = nil
             self.aecActive = false
-            if self.shouldResumeVAD {
-                self.shouldResumeVAD = false
-                await VADService.shared.resumeAfterChat()
-            }
+            // resumeAfterChat refuses while talk is active, including isStopping.
+            // Finish teardown first; a queued restart inherits wake ownership.
             self.isStopping = false
             if let request = self.restartRequest.take() {
                 self.toggle(agentID: request.agentID, windowID: request.windowID, withoutWindow: self.restartWithoutWindow)
             }
+            await self.resumeWakeListeningIfNeeded()
         }
     }
 

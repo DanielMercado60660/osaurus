@@ -72,6 +72,8 @@ struct SettingsSearchSelfFindProbe {
 
             ("Show animated avatar", "settings.chat.animatedAvatar"),
             ("Phone access", "server.phoneAccess"),
+            ("Allow phone to view this Mac's screen", "server.phoneAccess.screen"),
+            ("Open Screen Recording Settings", "server.phoneAccess.screenPermission"),
             ("Sign in to Tailscale", "server.phoneAccess.login"),
             ("Allowed Tailscale logins", "server.phoneAccess.logins"),
             ("Save allowed logins", "server.phoneAccess.saveLogins"),

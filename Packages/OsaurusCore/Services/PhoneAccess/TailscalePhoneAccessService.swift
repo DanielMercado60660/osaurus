@@ -69,6 +69,7 @@ final class TailscalePhoneAccessService: ObservableObject {
         generation = UUID()
         restartTask?.cancel(); restartTask = nil
         PhoneAccessTrust.shared.replace(with: nil)
+        PhoneScreenService.shared.stopViewing()
         output?.fileHandleForReading.readabilityHandler = nil
         try? input?.fileHandleForWriting.close()
         if let child = process, child.isRunning {

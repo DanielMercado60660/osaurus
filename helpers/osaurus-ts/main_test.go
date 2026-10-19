@@ -40,7 +40,7 @@ func TestAuthorize(t *testing.T) {
 			called := false
 			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				called = true
-				if r.Header.Get(ownerHeader) != secret || r.Header.Get(originHeader) != "1" {
+				if r.Header.Get(ownerHeader) != secret || r.Header.Get(originHeader) != "1" || r.Header.Get(deviceHeader) != "node1" {
 					t.Error("launch capability not injected")
 				}
 				if r.Header.Get("Authorization") != "" || r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Connection") != "" {
@@ -60,9 +60,11 @@ func TestAuthorize(t *testing.T) {
 			handler := authorize(next, lookup, []string{" owner@example.com "}, secret, accessPolicy{hosts: map[string]bool{"phone.test": true}})
 			req := httptest.NewRequest("POST", "http://phone.test/agents/id/run", nil)
 			req.RemoteAddr = "100.64.1.2:1234"
-			req.Header.Set("Connection", ownerHeader+", "+originHeader)
+			req.Header.Set("Connection", ownerHeader+", "+originHeader+", "+deviceHeader)
 			req.Header.Set(ownerHeader, "forged")
 			req.Header.Set(originHeader, "forged")
+			req.Header.Add(deviceHeader, "forged-device")
+			req.Header.Add(deviceHeader, "second-forgery")
 			req.Header.Set("Authorization", "Bearer forged")
 			req.Header.Set("X-Forwarded-For", "100.1.2.3")
 			req.Header.Set("Origin", tt.origin)

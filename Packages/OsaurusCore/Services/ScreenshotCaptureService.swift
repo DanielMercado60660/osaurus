@@ -209,6 +209,34 @@ final class ScreenshotCaptureService: @unchecked Sendable {
         }
     }
 
+    /// Ephemeral phone preview. Uses the same permission/capture path as chat,
+    /// but never creates a chat artifact or writes pixels to disk.
+    func capturePreviewJPEG(maxDimension: Int) async throws -> Data {
+        guard permissionChecker.hasScreenRecordingPermission() else {
+            throw ScreenshotCaptureError.missingScreenRecordingPermission
+        }
+        let image = try await capturer.capture(includeCursor: false)
+        return try Self.previewJPEG(from: image.pngData, maxDimension: maxDimension)
+    }
+
+    enum PreviewError: Error { case encodingFailed }
+
+    static func previewJPEG(from png: Data, maxDimension: Int) throws -> Data {
+        guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+            let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: max(1, min(maxDimension, 1280)),
+            ] as CFDictionary)
+        else { throw PreviewError.encodingFailed }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil)
+        else { throw PreviewError.encodingFailed }
+        CGImageDestinationAddImage(destination, thumbnail, [kCGImageDestinationLossyCompressionQuality: 0.6] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { throw PreviewError.encodingFailed }
+        return data as Data
+    }
+
     static func sanitizedFilename(_ raw: String?, now: Date) -> String {
         let fallback = "screenshot-\(Int(now.timeIntervalSince1970))"
         let candidate =

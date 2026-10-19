@@ -33,10 +33,13 @@ class SentenceRelease {
 }
 
 class PhoneSpeechQueue {
-  constructor(context, fetcher, onSpeaking=()=>{}) {
+  constructor(context, fetcher, onSpeaking=()=>{}, onPlayback=()=>{}) {
     this.context=context; this.fetcher=fetcher; this.onSpeaking=onSpeaking;
     this.epoch=0; this.tail=Promise.resolve(); this.sources=new Map(); this.nextTime=0;
     this.abort=new AbortController(); this.error=null; this.queued=0;
+    this.onPlayback=onPlayback;this.segments=new Map();this.meterTimer=null;
+    this.analyser=context.createAnalyser();this.analyser.fftSize=1024;
+    this.samples=new Float32Array(this.analyser.fftSize);this.analyser.connect(context.destination);
   }
   enqueue(text) {
     if(this.abort.signal.aborted)return;
@@ -46,7 +49,7 @@ class PhoneSpeechQueue {
     this.tail=this.tail.then(async()=>{
       if(epoch!==this.epoch || this.error)return;
       try { await this.speak(text,epoch); }
-      catch(error) { if(epoch===this.epoch) { this.error=error; this.stopSources(); } }
+      catch(error) { if(epoch===this.epoch) { this.error=error; this.stopSources(); this.closeMeter(); } }
       finally { this.queued-=text.length; }
     });
   }
@@ -76,21 +79,39 @@ class PhoneSpeechQueue {
           if(epoch!==this.epoch)return;
           const n=Math.min(3840,length-offset)/2, buffer=this.context.createBuffer(1,n,24000), samples=buffer.getChannelData(0);
           for(let i=0;i<n;i++){const raw=bytes[offset+2*i]|bytes[offset+2*i+1]<<8;samples[i]=(raw>=32768?raw-65536:raw)/32768;}
-          const node=this.context.createBufferSource(); node.buffer=buffer; node.connect(this.context.destination);
+          const node=this.context.createBufferSource(); node.buffer=buffer; node.connect(this.analyser);
           let resolve;const ended=new Promise(r=>resolve=r);
-          node.onended=()=>{node.disconnect();this.sources.delete(node);resolve();};
+          node.onended=()=>{node.disconnect();this.sources.delete(node);this.segments.delete(node);resolve();};
           node.cancelWait=resolve;this.sources.set(node,ended);
           const at=Math.max(this.context.currentTime+0.02,this.nextTime);
+          this.segments.set(node,{at,end:at+n/24000,text});
           node.start(at);this.nextTime=at+n/24000;count+=n;this.onSpeaking();
+          if(this.meterTimer===null)this.meterTimer=setInterval(()=>this.samplePlayback(),33);
         }
       }
       if(carry!==null)throw new Error('Speech stream ended with an incomplete PCM sample.');
       if(!count)throw new Error('Speech returned no audio.');
     } finally { await reader.cancel().catch(()=>{}); reader.releaseLock(); }
   }
-  async finish() { await this.tail; await Promise.all(this.sources.values()); if(this.error)throw this.error; }
-  stopSources() { for(const [node] of this.sources) {node.onended=null;try{node.stop();}catch{}node.disconnect();node.cancelWait();}this.sources.clear();this.nextTime=0; }
-  interrupt() { this.epoch++;this.abort.abort();this.stopSources(); }
+  // Read the output graph at the actual Web Audio playback clock, not fetch or
+  // enqueue time: synthesized later sentences can be ahead of audible playback.
+  samplePlayback() {
+    const now=this.context.currentTime;
+    const segment=[...this.segments.values()].find(s=>s.at<=now&&now<s.end);
+    this.analyser.getFloatTimeDomainData(this.samples);
+    const rms=Math.sqrt(this.samples.reduce((sum,v)=>sum+v*v,0)/this.samples.length);
+    this.onPlayback({speaking:!!segment,text:segment?.text||'',level:segment?Math.min(1,rms*6):0});
+  }
+  closeMeter() {
+    clearInterval(this.meterTimer);this.meterTimer=null;this.analyser.disconnect();
+    this.onPlayback({speaking:false,text:'',level:0});
+  }
+  async finish() {
+    try { await this.tail; await Promise.all(this.sources.values()); if(this.error)throw this.error; }
+    finally { this.closeMeter(); }
+  }
+  stopSources() { for(const [node] of this.sources) {node.onended=null;try{node.stop();}catch{}node.disconnect();node.cancelWait();}this.sources.clear();this.segments.clear();this.nextTime=0; }
+  interrupt() { this.epoch++;this.abort.abort();this.stopSources();this.closeMeter(); }
 }
 
 // Monotonic-time reducer; no timers, browser objects, or model dependencies.
@@ -111,7 +132,7 @@ class PhoneVAD {
   }
 }
 
-async function captureUtterance(context, signal) {
+async function captureUtterance(context, signal, onLevel=()=>{}) {
   const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
   if(signal.aborted){stream.getTracks().forEach(t=>t.stop());throw new DOMException('Stopped','AbortError');}
   return new Promise((resolve,reject)=>{
@@ -123,7 +144,7 @@ async function captureUtterance(context, signal) {
       input?.disconnect();analyser?.disconnect();muted?.disconnect();stream.getTracks().forEach(t=>t.stop());reject(error);return;
     }
     const samples=new Float32Array(analyser.fftSize),vad=new PhoneVAD();let recorder,timer,settled=false;
-    function cleanup(){clearInterval(timer);signal.removeEventListener('abort',abort);input.disconnect();analyser.disconnect();muted.disconnect();stream.getTracks().forEach(t=>t.stop());}
+    function cleanup(){onLevel(0);clearInterval(timer);signal.removeEventListener('abort',abort);input.disconnect();analyser.disconnect();muted.disconnect();stream.getTracks().forEach(t=>t.stop());}
     function fail(error){if(settled)return;settled=true;if(recorder?.state==='recording'){recorder.onstop=null;recorder.stop();}cleanup();reject(error);}
     function abort(){fail(new DOMException('Stopped','AbortError'));}
     signal.addEventListener('abort',abort,{once:true});
@@ -132,6 +153,7 @@ async function captureUtterance(context, signal) {
       try {
         if(context.state==='suspended')throw new Error('Audio paused. Tap Talk mode to resume.');
         analyser.getFloatTimeDomainData(samples);const rms=Math.sqrt(samples.reduce((s,v)=>s+v*v,0)/samples.length);
+        onLevel(Math.min(1,rms*6));
         const action=vad.update(rms,performance.now());
         if(action==='start') {
           const mime=['audio/mp4','audio/webm;codecs=opus','audio/webm'].find(t=>MediaRecorder.isTypeSupported(t));

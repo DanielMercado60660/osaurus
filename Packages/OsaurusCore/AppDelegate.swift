@@ -1185,6 +1185,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             log.debug("VAD detected agent: \(detection.agentName, privacy: .public)")
 
+            let route = WakeWordRoute.resolve(
+                companionEnabled: UserDefaults.standard.bool(forKey: AnimatedAvatarSetting.defaultsKey),
+                talkEnabledForAgent: TalkModeController.shared.configuration.enabledAgentIds.contains(detection.agentId)
+            )
+            if route == .companion {
+                AvatarOverlayWindowService.shared.show()
+                TalkModeController.shared.startFromWakeWord(agentID: detection.agentId)
+                return
+            }
+
             // Check if a window for this agent already exists
             let existingWindows = ChatWindowManager.shared.findWindows(byAgentId: detection.agentId)
 

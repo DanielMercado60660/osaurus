@@ -22,6 +22,70 @@ and browser origin/fetch metadata; the phone path grants no CORS access. It uses
 audio transcription APIs; it does not use the public relay or the mobile pairing
 flow below. See [Phone access settings](../Packages/OsaurusCore/Resources/Guide/guide-settings.md).
 
+
+### Fork browser screen preview (`/phone` only)
+
+`GET /phone/api/screen?display=main&max=1280` returns `image/jpeg`, quality 0.6,
+with the longest edge at most `max` pixels (aspect ratio retained). `display`
+defaults to `main` and no other display selector is accepted. `max` defaults to
+1280; it must be a positive integer and is capped at 1280. Unknown or duplicate
+query parameters are rejected. Every response, including errors, has
+`Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; no CORS headers.
+There is no screenshot file/artifact or input-injection endpoint.
+
+Admission requires **all** of: physical loopback, `X-Osaurus-Phone-Origin: 1`,
+the live `X-Osaurus-Phone-Secret` capability, a nonempty bounded
+`X-Osaurus-Phone-Device` StableID, no relay marker, no Authorization header and
+no Secure Channel envelope. The helper strips client-supplied identity and
+credential headers (including duplicates), then sets the device header from
+WhoIs after the login/device policy passes. Browser JavaScript MUST NOT send or
+receive the launch secret. Generic loopback trust, owner/agent API keys and
+paired/public-relay clients never authorize this endpoint. Stale helpers without
+the device header fail closed; build/embed the matching helper with the app.
+
+The persisted `phoneAccess.allowScreenViewing` setting (**Allow phone to view
+this Mac's screen**, Server → Overview → Phone access) defaults to false.
+Screen Recording must also be granted. Revoking either the setting or helper
+capability during a capture discards its bytes. One capture may be outstanding
+per device and capture starts MUST be at least 500 ms apart. `429` includes
+`Retry-After: 1`. The bundled page polls about once per second, coalesces
+completion-triggered refreshes, slows errors to five-second retries, aborts on
+hidden/pagehide/Chat, discards late frames and releases blob URLs. Successful
+pixels remain only in memory while visible. The Mac menu-bar viewing indicator
+expires five seconds after the last frame (and clears immediately on disable).
+
+Errors use `{"error":{"code":"…","message":"…"}}`:
+
+| HTTP | Code | Meaning |
+| --- | --- | --- |
+| 403 | `phone_owner_required` | Caller is not helper-verified with device identity. |
+| 403 | `screen_disabled` | The Mac's screen-sharing switch is off. |
+| 403 | `screen_permission_missing` | Screen Recording is unavailable/revoked. |
+| 403 | `screen_revoked` | Setting/helper access changed during capture. |
+| 400 | `invalid_screen_options` | Invalid display/max/query. |
+| 405 | `method_not_allowed` | Only GET is supported. |
+| 429 | `screen_rate_limited` | Device is too fast or has a capture outstanding. |
+| 499 | `screen_cancelled` | Request disconnected/cancelled (usually no response delivered). |
+| 503 | `screen_capture_failed` | Capture/encoding failed; no image returned. |
+
+Each request reaching this handler emits an Insights activity row through the
+existing tamper-evident store: method, `/phone/api/screen`, status, duration,
+`phone_device_id` (or `unverified` for rejected callers), display, error code and
+screen byte count. No screen bytes, secret, message or unverified claimed device
+ID are copied into that record. This uses the existing Insights store health and
+retention behavior; it does not introduce another log.
+
+`GET /agents` and `GET /agents/{id}` add `computer_use_enabled: Bool`, derived
+from the effective Tools + Computer Use capabilities and excluding built-ins.
+The Screen picker filters to true. Its composer sends the user's text unchanged
+through `POST /agents/{id}/run` and displays the normal streamed reply. It
+requests another frame when `osaurus_agent_tool.phase == "completed"` (including
+failed tool steps), and at turn completion; nested Computer Use actions remain
+visible through periodic frames. No preview is auto-attached to the model.
+Existing Computer Use perception, runtime authorization and approvals remain
+in force. This browser flow requires a Mac chat presenter for confirm cards;
+it does not enable the paired native client's Secure Channel approval protocol.
+
 ---
 
 ## Table of contents

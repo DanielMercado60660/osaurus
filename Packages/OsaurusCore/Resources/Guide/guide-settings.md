@@ -229,6 +229,8 @@ Server → Memory Safety → **Keep Model in Memory** requests GPU residency whi
 
 In **Settings → Conversation → Appearance**, turn on **Show animated avatar** (off by default). This immediately shows a floating dinosaur companion and replaces empty-chat hero avatars with the animated character. Drag the floating companion to reposition it; its position survives relaunch. Click it to start or stop talking with the last active agent without opening chat. Enable the agent in **Voice → Talk Mode** and configure speech input/output first. The **⌃⌥⌘T** shortcut also talks through the companion while it is visible. Right-click (or Control-click) for **Open chat**, **Hide companion**, and agent switching. Hiding the companion stops talk mode started from it. Turn the same toggle off to hide it and restore static avatars, including custom images. The character uses the agent’s mascot color (blue when none is selected), with a scarf, glasses, or leaf for the selected mascot.
 
+When **Show animated avatar** is on and the detected agent is enabled in **Voice → Talk Mode**, its wake word starts companion talk without raising chat. Otherwise wake detection keeps the existing chat-window behavior. Ending companion talk resumes wake listening if Wake Word remains enabled.
+
 The companion grows while talk mode is active, perks up while listening, and looks upward while waiting for speech playback. Your partial transcript appears while listening when **Voice → Talk Mode → Show Captions** is enabled. It briefly celebrates completed replies, looks apologetic after talk errors, and reacts when interrupted. At rest it occasionally looks around, stretches, or wags its tail, and loosely follows the pointer with its eyes. Reduce Motion disables idle motion, pointer following, and animated resizing while retaining a level-driven mouth and static expressions. Hidden or occluded surfaces stop animating and sampling.
 
 ### Server → Overview → Phone access over Tailscale
@@ -264,6 +266,38 @@ The helper rejects unknown Host names (including DNS rebinding), cross-origin
 requests and Sec-Fetch-Site values other than absent, same-origin or none. Phone
 responses do not grant cross-origin browser access. Only one app instance can
 hold the phone-access state directory lock at a time.
+
+**Allow phone to view this Mac's screen** is a separate, off-by-default switch
+in this card. It saves immediately and persists across relaunches. The card
+shows the current Screen Recording permission state; **Open Screen Recording
+Settings** opens the macOS pane. Grant Osaurus permission there (a relaunch may
+be required). Screen viewing does not grant Accessibility or enable Computer Use.
+
+On the phone, choose **Screen** to view the Mac's main display. Tap the preview
+to enlarge and scroll it; use the browser's pinch zoom for detail. The page polls
+only while this panel and the page are visible. Returning to **Chat**, hiding the
+page, or leaving it aborts polling and clears the preview. The Mac displays
+**Phone is viewing your screen** in the menu bar while frames are requested; it
+expires about five seconds after the last frame. Turning off screen viewing or
+stopping Phone access removes it immediately and discards pending captures.
+Every screen request handled by the screen endpoint emits a metadata-only
+Insights activity row with the verified device StableID, outcome and byte count;
+pixels are not stored in Insights or chat artifacts.
+
+**Ask about this screen** uses the selected agent's normal streamed chat. In the
+Screen panel the picker lists only custom agents with effective **Tools** and
+**Computer Use** enabled; if none exist, it explains how to configure one on the
+Mac. Reload the page after changing agents. Tool-completion events refresh the
+preview, and polling shows changes during longer tools. The preview itself is
+not attached to messages: the agent uses its existing Computer Use perception
+and cloud-vision consent rules. All actions keep the normal approval gate. Keep
+a Mac chat window open for approval cards; this browser panel does not add a
+remote approval surface. A run requiring approval without a Mac presenter fails
+with the existing clear error. No phone click, key or pointer input is injected.
+Screen viewing accepts only helper-verified owners; API keys, the public relay
+and ordinary loopback callers cannot fetch it, even when they can use chat.
+
+The phone companion uses the selected agent’s mascot color and accessory, or its custom image with an audio-reactive ring. Tap the small header companion to start talk; it grows in the center with playback-synchronized sentence captions. Tap it again to interrupt and end talk. Reduce Motion keeps a static pose and simple mouth; hiding the page stops animation and talk.
 
 The phone page supports an agent picker, streaming chat, safe basic Markdown,
 and Hold to talk using the Mac's `/audio/transcriptions` endpoint (configure a

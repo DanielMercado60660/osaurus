@@ -32,6 +32,7 @@ import (
 
 const ownerHeader = "X-Osaurus-Phone-Secret"
 const originHeader = "X-Osaurus-Phone-Origin"
+const deviceHeader = "X-Osaurus-Phone-Device"
 
 type identity struct {
 	Login    string
@@ -140,6 +141,7 @@ func authorize(next http.Handler, lookup identityLookup, logins []string, secret
 		r.Header.Del("Connection")
 		r.Header.Del(ownerHeader)
 		r.Header.Del(originHeader)
+		r.Header.Del(deviceHeader)
 		r.Header.Del("Authorization")
 		r.Header.Del("Forwarded")
 		r.Header.Del("X-Forwarded-For")
@@ -147,6 +149,7 @@ func authorize(next http.Handler, lookup identityLookup, logins []string, secret
 		r.Header.Del("X-Forwarded-Proto")
 		r.Header.Set(ownerHeader, secret)
 		r.Header.Set(originHeader, "1")
+		r.Header.Set(deviceHeader, peer.StableID)
 		granted = true
 		report(true) // Report admission immediately, even for a long streaming response.
 		next.ServeHTTP(w, r)
