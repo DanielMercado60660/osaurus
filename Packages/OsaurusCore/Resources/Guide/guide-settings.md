@@ -10,6 +10,16 @@ Settings… (⌘,) opens the Management window. Type a name in the sidebar searc
 
 Ask the assistant to change declarative settings in chat (`osaurus_config`); each change shows a one-tap approval card first (see the Declarative Configuration topic).
 
+## Make it yours
+
+After onboarding, an empty local chat shows **Make it yours**. Each row takes one click:
+
+- **Talk to it** requests microphone access, enables the current agent in **Voice → Talk Mode → Enabled for Agent**, and prepares Parakeet (~600 MB) and PocketTTS through the existing download managers. Cached models are reused; your selected Parakeet version and any existing TTS provider/voice choices are preserved. New installs use on-device PocketTTS. Start talking with **⌃⌥⌘T** or the chat talk button once preparation finishes. Setup does not start recording. Downloads continue if you leave the chat. The card shows combined model preparation and each model's status; Parakeet and compilation may have indeterminate progress. A failure shows the manager's error; click the same button to retry. If microphone access is denied, allow Osaurus in macOS **System Settings → Privacy & Security → Microphone**, then retry.
+- **Show your companion** enables **Conversation → Appearance → Show animated avatar**, including the floating desktop companion.
+- **Reach it from your phone** opens **Server → Overview → Phone access**, scrolling to that control. Enable Phone access and finish the Tailscale login there. This shortcut never enables access silently; the row is done only when the phone service is running.
+
+The card disappears when all three rows are ready. **Not now** hides it persistently across chats and launches; background downloads continue. Restore it with **Conversation → Appearance → Show Make it yours**. The three action labels are searchable aliases for their existing destination settings. Notification permission is requested after the onboarding window closes; users who have already completed onboarding retain the launch-time request.
+
 ## Agent descriptions
 
 Each agent has an optional **Brief description (optional)** field under Settings → Agents → the agent → Configure. It is a one-line summary of what the agent does and when to delegate to it, shown beside the agent's name wherever the Orchestrator or an agent picker lists targets. It is never required: agents with a blank description can still be saved, duplicated, and delegated to.

@@ -24,6 +24,7 @@ import SwiftUI
 
 struct ChatSettingsView: View {
     @AppStorage(AnimatedAvatarSetting.defaultsKey) private var showAnimatedAvatar = false
+    @AppStorage(MakeItYoursPreference.dismissedKey) private var makeItYoursDismissed = false
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var taskManager = BackgroundTaskManager.shared
 
@@ -129,6 +130,13 @@ struct ChatSettingsView: View {
 
     private var appearanceSection: some View {
         SettingsSection(title: "Appearance", icon: "text.bubble") {
+            SettingsToggle(
+                title: L("Show Make it yours"),
+                description: "Show voice, companion, and phone setup in empty chats until all three are ready. Not now hides it; turn this on to bring it back.",
+                anchorId: "settings.chat.makeItYours",
+                isOn: Binding(get: { !makeItYoursDismissed }, set: { makeItYoursDismissed = !$0 })
+            )
+
             SettingsToggle(
                 title: L("Show animated avatar"),
                 description: "Show a floating dinosaur companion and animated chat avatars. Drag the companion to move it; click it to open chat.",

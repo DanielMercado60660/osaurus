@@ -273,6 +273,10 @@ struct ChatEmptyState: View {
                         )
                     }
 
+                    if !isRemoteChat {
+                        MakeItYoursCard(agentID: activeAgentId)
+                    }
+
                     Spacer(minLength: 20)
                 }
                 .frame(maxWidth: .infinity, minHeight: geometry.size.height)
