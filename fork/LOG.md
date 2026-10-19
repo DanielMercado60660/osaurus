@@ -94,3 +94,19 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   the old flat layout; the cached copy is the newer v2.1 layout. Needs a
   ~700 MB download (asked owner). Silero VAD (1.1 MB) downloaded.
 - Running: T10 packaging/size (Codex), app rebuild.
+
+## 2026-10-19 (day 1, afternoon)
+
+- T10 packaging merged: `make fork-dmg` → `build/fork/Osaurus-fork-<sha>.dmg`.
+  Fixed: forcing `STRIP_INSTALLED_PRODUCT/STRIP_STYLE=all` broke archive on
+  swift-atomics `_AtomicsShims.o`; now relies on archive's default strip.
+  First DMG (d98d1f0e5, ad-hoc signed, not notarized): **DMG 98.8 MB**, app
+  209 MB installed (MacOS 132 MB, osaurus-ts 21 MB after `-s -w` (was 31 MB),
+  CLI 11.5 MB, Resources 41 MB). No `__LLVM_COV`. codesign --deep --strict OK.
+  (Upstream's standard DMG is ~70 MB; the delta is mostly osaurus-ts.)
+- Helper pin moved to an Info.plist build setting (no tracked generated file).
+- T11 companion everywhere (phone canvas dinosaur + wake word → companion
+  talk), T12 16 GB voice budget (speech models counted in RAM projections,
+  talk advisory ≤16 GB), T13 phone remote screen (off by default,
+  helper-verified owner only, rate-limited, logged, on-Mac indicator) merged.
+  T13 security review running.
