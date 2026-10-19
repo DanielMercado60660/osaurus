@@ -66,3 +66,12 @@ Root causes in the self-transcript check:
 
 Commit on your branch; write `fork/tasks/T18b-echo-fragments.RESULT.md`.
 Claude will rebuild and rerun the four-scenario benchmark.
+
+## Additional evidence (fork/metrics/evidence/t18/)
+
+`echo-barge-in-chat.txt`: only the first question and its answer exist — the
+real interrupting question ("What's the capital of France?") was **never
+sent**; the run recorded `echoRejectedSegments: 1`, so the real user utterance
+was very likely classified as echo (shares "the", "of" with the agent's
+sky/Rayleigh answer). Per-turn telemetry and app logs for both echo runs are in
+that folder.
