@@ -16,6 +16,23 @@ from talk_latency import summarize
 
 HERE = Path(__file__).resolve().parent
 
+POCKET_REQUIRED = ("cond_prefill.mlmodelc", "flowlm_step.mlmodelc",
+                   "flow_decoder_fused.mlmodelc", "mimi_decoder.mlmodelc", "constants_bin")
+
+
+def pocket_model_paths(home):
+    """Match PocketTTSResources: complete shared v2.1 first, then app-owned.
+
+    Never accept the old flat/v2 pack or combine fragments from two caches.
+    This is a presence probe, not validation of CoreML/constant contents.
+    """
+    bases = (home / ".cache/fluidaudio", home / ".cache/osaurus/fluidaudio")
+    for base in bases:
+        paths = [base / "Models/pocket-tts/v2.1/english" / name for name in POCKET_REQUIRED]
+        if all(path.is_dir() for path in paths):
+            return paths
+    return [bases[1] / "Models/pocket-tts/v2.1/english" / name for name in POCKET_REQUIRED]
+
 
 def require_models(home):
     """Paths/names match the pinned FluidAudio loaders, including VAD and vocab."""
@@ -26,11 +43,11 @@ def require_models(home):
              ["Preprocessor.mlmodelc", "Encoder.mlmodelc", "Decoder.mlmodelc", "JointDecisionv3.mlmodelc", "parakeet_vocab.json"]],
         "Silero VAD (FluidInference/silero-vad-coreml), loaded with Voice Setup":
             [models / "silero-vad/silero-vad-unified-256ms-v6.0.0.mlmodelc"],
-        "PocketTTS (FluidInference/pocket-tts-coreml), Voice → Text To Speech":
-            [home / ".cache/fluidaudio/Models/pocket-tts" / name for name in
-             ["cond_step.mlmodelc", "flowlm_step.mlmodelc", "flow_decoder.mlmodelc", "mimi_decoder_v2.mlmodelc", "constants_bin"]],
+        "PocketTTS v2.1 English (FluidInference/pocket-tts-coreml), Voice → Text To Speech":
+            pocket_model_paths(home),
     }
-    missing = [(name, path) for name, paths in required.items() for path in paths if not path.exists()]
+    missing = [(name, path) for name, paths in required.items() for path in paths
+               if not (path.is_file() if path.suffix == ".json" else path.is_dir())]
     if missing:
         details = "\n".join(f"  {name}\n    missing: {path}" for name, path in missing)
         raise ValueError("Download these speech resources in Osaurus before benchmarking; this script does not download:\n" + details)
@@ -144,6 +161,7 @@ def main():
               "app_source_sha": os.environ.get("APP_SOURCE_SHA", "unverified: set APP_SOURCE_SHA to the app's actual build SHA"),
               "app": str(binary.parent.parent.parent), "app_executable_sha256": digest(binary),
               "checkout_vmlx_pin": [p for p in pins if "vmlx" in p["identity"].lower()],
+              "checkout_fluidaudio_pin": [p for p in pins if p["identity"].lower() == "fluidaudio"],
               "model": model_id, "model_dir": str(model_dir), "model_config_sha256": digest(model_dir / "config.json"),
               "generation_config": json.loads(generation.read_text()) if generation.exists() else None,
               "generation_overrides": None, "speech_resources": resources,

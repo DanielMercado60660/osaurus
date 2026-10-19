@@ -614,11 +614,17 @@ public final class TTSService: ObservableObject {
             do {
                 // Route through the downloader explicitly so we get progress callbacks.
                 // When models are already cached this returns nearly instantly.
+                let cacheBase = await Task.detached(priority: .utility) {
+                    PocketTTSResources.loadingBase()
+                }.value
                 let modelDirectory = try await PocketTtsResourceDownloader.ensureModels(
-                    directory: nil,
+                    language: PocketTTSResources.language,
+                    directory: cacheBase,
+                    precision: PocketTTSResources.precision,
+                    placement: PocketTTSResources.placement,
                     progressHandler: { progress in
                         Task { @MainActor in
-                            guard let self else { return }
+                            guard let self, self.initTask != nil else { return }
                             let fraction: Double?
                             switch progress.phase {
                             case .downloading:
@@ -631,7 +637,10 @@ public final class TTSService: ObservableObject {
                     }
                 )
 
-                let mgr = PocketTtsManager(defaultVoice: voice)
+                let mgr = PocketTtsManager(
+                    defaultVoice: voice, language: PocketTTSResources.language,
+                    directory: cacheBase, precision: PocketTTSResources.precision,
+                    placement: PocketTTSResources.placement)
                 try await mgr.initialize()
                 await SpeechModelMemory.track(mgr, kind: .tts, roots: SpeechModelMemory.ttsRoots(directory: modelDirectory))
                 await MainActor.run {
@@ -689,16 +698,7 @@ public final class TTSService: ObservableObject {
     }
 
     nonisolated private static func pocketTtsModelsExistOnDisk() -> Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let repoDir =
-            home
-            .appendingPathComponent(".cache", isDirectory: true)
-            .appendingPathComponent("fluidaudio", isDirectory: true)
-            .appendingPathComponent("Models", isDirectory: true)
-            .appendingPathComponent("pocket-tts", isDirectory: true)
-        let required = ModelNames.PocketTTS.requiredModels
-        let fm = FileManager.default
-        return required.allSatisfy { fm.fileExists(atPath: repoDir.appendingPathComponent($0).path) }
+        PocketTTSResources.cachedBase() != nil
     }
 
     // MARK: - Playback

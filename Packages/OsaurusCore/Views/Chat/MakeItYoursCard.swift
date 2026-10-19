@@ -69,7 +69,7 @@ struct MakeItYoursCard: View {
                             .settingsLandingAnchor("settings.chat.makeItYours")
                     }
                     row("Talk to it", icon: "waveform", status: state.talk,
-                        detail: "Parakeet (~600 MB) + PocketTTS on this Mac. Talk shortcut: ⌃⌥⌘T.",
+                        detail: "Parakeet (~600 MB) + PocketTTS v2.1 on this Mac. Cached v2.1 models are reused; older voice packs need a one-time download. Talk shortcut: ⌃⌥⌘T.",
                         anchor: "voice.talk.agents",
                         allowsActionWhileBusy: !state.agentEnabled && !setup.requestingMicrophone) {
                         setup.enableTalk(for: agentID)
