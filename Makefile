@@ -13,12 +13,13 @@ XCODEBUILD_FLAGS ?=
 # for some environments; it adds an __LLVM_COV segment and runtime overhead).
 NO_COVERAGE_FLAGS := ENABLE_CODE_COVERAGE=NO CLANG_COVERAGE_MAPPING=NO
 
-.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean ts-helper wa-helper wa-helper-release bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat evals-pr-report evals-pr-report-baseline evals-watcher-report evals-scoreboard
+.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean ts-helper fork-dmg wa-helper wa-helper-release bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat evals-pr-report evals-pr-report-baseline evals-watcher-report evals-scoreboard
 
 help:
 	@echo "Targets:"
 	@echo "  cli            Build CLI ($(SCHEME_CLI)) into $(DERIVED)"
 	@echo "  app            Build app ($(SCHEME_APP)) and embed CLI"
+	@echo "  fork-dmg       Archive, sign and package build/fork/Osaurus-fork-<sha>.dmg"
 	@echo "  install-cli    Install/update /usr/local/bin/osaurus symlink"
 	@echo "  serve          Build CLI and start server (use PORT=XXXX, EXPOSE=1)"
 	@echo "  status         Check if server is running"
@@ -48,7 +49,7 @@ help:
 	@echo "  evals-test     Run the OsaurusEvals harness unit tests (deterministic, token-free)"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  computer-use-evidence Run local Computer Use proof lane into build/computer-use-evidence/"
-	@echo "  ts-helper      Build the Tailscale phone helper and compiled Swift digest (needs Go)"
+	@echo "  ts-helper      Build the Tailscale phone helper and Info.plist build setting (needs Go)"
 	@echo "  wa-helper      Build the WhatsApp bridge helper (osaurus-wa) into build/ (needs Go)"
 	@echo "  wa-helper-release  Package build/osaurus-wa-macos.zip and print pin digests"
 	@echo "  clean          Remove DerivedData build output"
@@ -100,11 +101,14 @@ serve: install-cli
 status:
 	osaurus status
 
-# Build/sign the helper and generate the Swift constant before any app/CLI
+# Build/sign the helper and generate the optional xcconfig before app/CLI
 # compilation. TS_HELPER_SIGN_IDENTITY defaults to ad-hoc; signed distributions
 # must set it to the app's signing identity and seal the final bundle.
 ts-helper:
 	@./scripts/build/build-ts-helper.sh
+
+fork-dmg:
+	@CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" ./scripts/build/build-fork-dmg.sh
 
 # WhatsApp Web bridge helper (whatsmeow). Dev lane: build locally and point
 # the app at it with OSAURUS_WA_PATH (DEBUG builds only), mirroring the imsg

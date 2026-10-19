@@ -41,6 +41,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		F010CAFE2F90000100895593 /* PhoneAccess.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = PhoneAccess.xcconfig; sourceTree = "<group>"; };
 		F0BB3C262E51FBCC00895593 /* osaurus.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = osaurus.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F0BB3C342E51FBCD00895593 /* osaurusTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = osaurusTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F0BB3C3E2E51FBCD00895593 /* osaurusUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = osaurusUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -102,6 +103,7 @@
 		F0BB3C1D2E51FBCC00895593 = {
 			isa = PBXGroup;
 			children = (
+				F010CAFE2F90000100895593 /* PhoneAccess.xcconfig */,
 				F0BB3C282E51FBCC00895593 /* osaurus */,
 				F0BB3C412E51FBCD00895593 /* osaurusUITests */,
 				F0C60E852E54A26A0028ED4F /* Frameworks */,
@@ -316,6 +318,7 @@
 /* Begin XCBuildConfiguration section */
 		F0BB3C462E51FBCD00895593 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F010CAFE2F90000100895593 /* PhoneAccess.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -382,6 +385,7 @@
 		};
 		F0BB3C472E51FBCD00895593 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F010CAFE2F90000100895593 /* PhoneAccess.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;

@@ -15,6 +15,8 @@ let package = Package(name: "PhoneAccessProof", platforms: [.macOS(.v15)], targe
 ])
 SWIFT
 CORE="$ROOT/Packages/OsaurusCore"
+# Remove a stale copy from pre-T10 isolated runs.
+rm -f "$PROOF/Sources/OsaurusCore/PhoneAccessBuildPin.swift"
 cp "$CORE"/Services/PhoneAccess/*.swift "$PROOF/Sources/OsaurusCore/"
 cp "$CORE/Networking/PhoneWebAssets.swift" "$CORE/Models/Configuration/SettingsSearchIndex.swift" "$CORE/Models/Configuration/ManagementTab.swift" "$CORE/Services/SearchService.swift" "$CORE/Views/Settings/PhoneAccessSettingsCard.swift" "$PROOF/Sources/OsaurusCore/"
 cp "$CORE/AppleApps/AppleApp.swift" "$PROOF/Sources/OsaurusCore/"

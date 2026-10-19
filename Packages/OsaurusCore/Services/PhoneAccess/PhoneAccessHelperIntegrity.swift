@@ -4,7 +4,7 @@ import Foundation
 import Security
 
 /// Team-signed apps accept only valid code from their own team. Development
-/// apps without a team use a digest compiled into OsaurusCore by make ts-helper.
+/// apps without a team use a build digest in the signed app Info.plist.
 /// No launch-time sidecar or environment variable can supply the expected pin.
 enum PhoneAccessHelperIntegrity {
     static func validate(helper: URL) throws {
@@ -23,7 +23,7 @@ enum PhoneAccessHelperIntegrity {
         } else {
             // No Team ID: unsigned/ad-hoc builds still require an exact build pin.
             let digest = SHA256.hash(data: try Data(contentsOf: helper)).map { String(format: "%02x", $0) }.joined()
-            guard acceptsDevelopmentDigest(digest, expected: PhoneAccessBuildPin.sha256) else {
+            guard acceptsDevelopmentDigest(digest, expected: Bundle.main.object(forInfoDictionaryKey: "OsaurusTSHelperSHA256") as? String) else {
                 throw IntegrityError.wrongDigest
             }
         }
@@ -77,7 +77,7 @@ enum PhoneAccessHelperIntegrity {
             case .unsafeFile: "Bundled phone helper must be a regular executable and not group/world-writable"
             case .invalidSignature: "Phone helper or app code signature is invalid"
             case .wrongTeam: "Phone helper is not signed by the app's team"
-            case .wrongDigest: "Phone helper does not match the digest compiled into this development app"
+            case .wrongDigest: "Phone helper does not match the build digest in this app’s Info.plist"
             }
         }
     }
