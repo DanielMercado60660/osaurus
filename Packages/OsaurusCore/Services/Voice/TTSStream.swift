@@ -19,35 +19,76 @@ protocol TTSStreamPlayer: Sendable {
     func cancelPlayback()
 }
 
+public enum TTSStreamReleasePolicy: Sendable {
+    case grouped
+    case conversational
+}
+
 /// Incremental counterpart of TTSTextChunker.split. Retains the last chunk:
 /// later deltas can still extend that sentence or pack another sentence into it.
 /// This intentionally preserves the existing 240-character grouping budget.
 struct TTSIncrementalChunker {
     private var text = ""
     private var emitted = 0
+    private var firstPrefixCount = 0
+    private let policy: TTSStreamReleasePolicy
+    private(set) var releasedFirst = false
+
+    init(policy: TTSStreamReleasePolicy = .grouped) { self.policy = policy }
+
+    /// Called by the stream's 500 ms deadline as well as by incoming deltas.
+    mutating func releaseFirst(allowClause: Bool) -> [String] {
+        guard policy == .conversational, !releasedFirst, Self.markdownIsClosed(text, includingStrong: true) else { return [] }
+        let plain = MarkdownStripper.plainText(from: text)
+        var boundary = plain.firstIndex(where: { ".!?".contains($0) })
+        if boundary == nil && allowClause {
+            boundary = plain.indices.first { index in
+                ",;".contains(plain[index]) && plain.distance(from: plain.startIndex, to: index) >= 39
+            }
+        }
+        guard let boundary else { return [] }
+        let end = plain.index(after: boundary)
+        let first = String(plain[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !first.isEmpty else { return [] }
+        firstPrefixCount = plain.distance(from: plain.startIndex, to: end)
+        releasedFirst = true
+        return [first]
+    }
+
+    private var remainingText: String {
+        String(MarkdownStripper.plainText(from: text).dropFirst(firstPrefixCount))
+    }
 
     mutating func append(_ delta: String) -> [String] {
         text += delta
         // An unfinished Markdown construct can retroactively remove text (in
         // particular a fenced code block or link URL). Wait for its closure.
-        guard Self.markdownIsClosed(text) else { return [] }
-        let chunks = TTSTextChunker.split(MarkdownStripper.plainText(from: text))
+        guard Self.markdownIsClosed(text, includingStrong: policy == .conversational) else { return [] }
+        let first = releaseFirst(allowClause: false)
+        let chunks = TTSTextChunker.split(remainingText)
         let stableCount = max(0, chunks.count - 1)
-        guard stableCount > emitted else { return [] }
+        guard stableCount > emitted else { return first }
         let ready = Array(chunks[emitted..<stableCount])
         emitted = stableCount
-        return ready
+        return first + ready
     }
 
     mutating func finish() -> [String] {
-        let chunks = TTSTextChunker.split(MarkdownStripper.plainText(from: text))
+        let chunks = TTSTextChunker.split(remainingText)
         let ready = Array(chunks.dropFirst(emitted))
         text = ""
         emitted = 0
+        firstPrefixCount = 0
+        releasedFirst = false
         return ready
     }
 
-    private static func markdownIsClosed(_ text: String) -> Bool {
+    private static func markdownIsClosed(_ text: String, includingStrong: Bool = false) -> Bool {
+        if includingStrong {
+            for marker in ["**", "__"] {
+                if (text.components(separatedBy: marker).count - 1) % 2 != 0 { return false }
+            }
+        }
         // Conservative: unmatched markup delays speech until finish rather
         // than speaking a URL, code, or formatting delimiter prematurely.
         for marker in ["```", "~~~", "`", "*", "_", "~~"] {
@@ -94,7 +135,10 @@ public final class TTSStreamHandle {
     private let player: any TTSStreamPlayer
     private let synthesize: @MainActor (String, @escaping @MainActor ([Float]) async throws -> Void) async throws -> Void
     private let onTerminal: @MainActor () -> Void
-    private var chunker = TTSIncrementalChunker()
+    private var chunker: TTSIncrementalChunker
+    private let releasePolicy: TTSStreamReleasePolicy
+    private var firstClauseTask: Task<Void, Never>?
+    private var clauseDeadlineReached = false
     private let input: AsyncStream<String>
     private let continuation: AsyncStream<String>.Continuation
     private var task: Task<Void, Never>?
@@ -108,8 +152,11 @@ public final class TTSStreamHandle {
         id: String,
         player: any TTSStreamPlayer,
         synthesize: @escaping @MainActor (String, @escaping @MainActor ([Float]) async throws -> Void) async throws -> Void,
+        releasePolicy: TTSStreamReleasePolicy = .grouped,
         onTerminal: @escaping @MainActor () -> Void = {}
     ) {
+        self.releasePolicy = releasePolicy
+        self.chunker = TTSIncrementalChunker(policy: releasePolicy)
         self.id = id
         self.player = player
         self.synthesize = synthesize
@@ -119,19 +166,33 @@ public final class TTSStreamHandle {
 
     isolated deinit {
         continuation.finish()
+        firstClauseTask?.cancel()
         task?.cancel()
-        player.cancelPlayback()
+        if !terminal { player.cancelPlayback() }
     }
 
     public func enqueue(text: String) {
         guard !inputClosed, !terminal else { return }
         for chunk in chunker.append(text) { continuation.yield(chunk) }
+        if releasePolicy == .conversational && !chunker.releasedFirst {
+            if clauseDeadlineReached {
+                for chunk in chunker.releaseFirst(allowClause: true) { continuation.yield(chunk) }
+            } else if firstClauseTask == nil {
+                firstClauseTask = Task { [weak self] in
+                    do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                    guard let self, !self.terminal, !self.inputClosed else { return }
+                    self.clauseDeadlineReached = true
+                    for chunk in self.chunker.releaseFirst(allowClause: true) { self.continuation.yield(chunk) }
+                }
+            }
+        }
         startIfNeeded()
     }
 
     public func finish() {
         guard !inputClosed, !terminal else { return }
         inputClosed = true
+        firstClauseTask?.cancel()
         for chunk in chunker.finish() { continuation.yield(chunk) }
         continuation.finish()
         startIfNeeded()
@@ -143,6 +204,7 @@ public final class TTSStreamHandle {
         // buffers it discards. No discarded buffer may emit firstAudio/finished.
         terminal = true
         inputClosed = true
+        firstClauseTask?.cancel()
         continuation.finish()
         task?.cancel()
         task = nil
@@ -188,6 +250,7 @@ public final class TTSStreamHandle {
                 guard let self, !self.terminal else { return }
                 self.terminal = true
                 self.inputClosed = true
+                self.firstClauseTask?.cancel()
                 self.continuation.finish()
                 player.cancelPlayback()
                 self.onTerminal()
@@ -202,6 +265,7 @@ public final class TTSStreamHandle {
         guard played else {
             terminal = true
             inputClosed = true
+            firstClauseTask?.cancel()
             continuation.finish()
             task?.cancel()
             player.cancelPlayback()

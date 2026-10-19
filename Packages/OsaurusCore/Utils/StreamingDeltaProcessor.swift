@@ -31,6 +31,8 @@ final class StreamingDeltaProcessor {
     /// Visible content only, after channel routing and at the UI reveal cadence.
     /// Reasoning and tool payloads never pass through this hook.
     var onVisibleDelta: ((String) -> Void)?
+    /// Content channel after engine routing, before display pacing.
+    var onRawVisibleDelta: ((String) -> Void)?
 
     /// Pending (unrevealed) deltas held as a character array with a head
     /// cursor. Draining advances `bufferHead` instead of rebuilding the
@@ -133,6 +135,7 @@ final class StreamingDeltaProcessor {
     /// inline (O(1) integer comparisons), and flushes if thresholds are met.
     func receiveDelta(_ delta: String) {
         guard !delta.isEmpty else { return }
+        onRawVisibleDelta?(delta)
         ChatPerfTrace.shared.count("stream.delta")
         ChatPerfTrace.shared.count("stream.deltaBytes", delta.utf8.count)
         deltaBuffer.append(contentsOf: delta)

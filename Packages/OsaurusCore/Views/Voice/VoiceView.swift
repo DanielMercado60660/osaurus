@@ -23,6 +23,7 @@ enum VoiceTab: String, CaseIterable, AnimatedTabItem {
     case textToSpeech = "Text To Speech"
     /// Wake-word agent activation. Raw value predates the "Wake Word" title.
     case vadMode = "VAD Mode"
+    case talkMode = "Talk Mode"
     case models = "Models"
 
     var title: String {
@@ -32,6 +33,7 @@ enum VoiceTab: String, CaseIterable, AnimatedTabItem {
         case .transcription: return L("Transcription")
         case .textToSpeech: return L("Text To Speech")
         case .vadMode: return L("Wake Word")
+        case .talkMode: return L("Talk Mode")
         case .models: return L("Models")
         }
     }
@@ -98,6 +100,8 @@ struct VoiceView: View {
                     VADModeSettingsTab()
                 case .textToSpeech:
                     TTSModeSettingsTab()
+                case .talkMode:
+                    TalkModeSettingsTab()
                 case .models:
                     VoiceModelsTab()
                 }

@@ -9,8 +9,10 @@ protocol AvatarAudioLevelSource {
 
 @MainActor
 struct DefaultAvatarAudioLevelSource: AvatarAudioLevelSource {
-    var isSpeaking: Bool { TTSService.shared.playingMessageId != nil }
-    var outputLevel: Float { 0 }  // TODO(T01): replace 0 with TTSService.shared.outputLevel.
+    var isSpeaking: Bool {
+        TTSService.shared.playingMessageId != nil || TalkModeController.shared.state == .speaking
+    }
+    var outputLevel: Float { TTSService.shared.outputLevel }
 }
 
 /// One model per visible surface. Sampling is owned by the view's cancellable
@@ -61,7 +63,9 @@ final class AvatarStateModel: ObservableObject {
             AvatarInputs(
                 isSpeaking: audio.isSpeaking,
                 speakingLevel: audio.outputLevel,
-                isListening: vad.state == .listening || speech.isSpeechDetected,
+                isListening: vad.state == .listening || speech.isSpeechDetected
+                    || (TalkModeController.shared.agentID == selectedAgent.id
+                        && TalkModeController.shared.state == .listening),
                 listeningLevel: max(vad.audioLevel, speech.audioLevel),
                 isStreaming: streaming,
                 hasVisibleText: hasText,

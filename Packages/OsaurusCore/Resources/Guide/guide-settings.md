@@ -243,3 +243,18 @@ when unavailable, HTTP still travels inside Tailscale but browser microphone and
 PWA features require HTTPS. On iOS Safari, use Share → Add to Home Screen.
 A missing helper requires a build with Go (`make app`); no helper is downloaded at
 runtime. If a helper exits, the status shows the error; toggle off/on to retry.
+
+
+### Voice → Talk Mode
+
+- **Enabled for Agent** — opt individual agents into hands-free conversation.
+- **End of Turn Silence** — silence before sending a final transcript (700 ms by default).
+- **Allow Barge-In** — sustained speech interrupts generation and playback (160 ms minimum).
+- **Echo Cancellation** — request Apple voice processing on the shared microphone/playback engine.
+  If unavailable, playback uses a higher VAD threshold and a 300 ms echo cooldown.
+- **Show Captions** — display the user's partial transcript beside the chat talk button.
+
+Settings save automatically. Silence and echo changes stop active talk mode; start it again
+for the new capture settings. Toggle with the waveform circle beside the chat mic or
+**Control–Option–Command–T**. Talk mode pauses Wake Word and supersedes continuous Chat Voice.
+It requires a microphone input, downloaded speech model, and configured Text To Speech engine.

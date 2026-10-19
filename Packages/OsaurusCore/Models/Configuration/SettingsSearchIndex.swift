@@ -587,6 +587,51 @@ public enum SettingsSearchIndex {
             subTab: "VAD Mode"
         ),
         .init(
+            id: "voice.talk.agents",
+            tab: .voice,
+            section: "Talk Mode",
+            title: "Enabled for Agent",
+            keywords: ["hands free", "talk mode", "enable agent"],
+            subTab: "Talk Mode",
+            disambiguation: "Hands-free conversation; separate from Chat Voice, Transcription, and Wake Word."
+        ),
+        .init(
+            id: "voice.talk.silence",
+            tab: .voice,
+            section: "Talk Mode",
+            title: "End of Turn Silence",
+            keywords: ["pause", "milliseconds", "end of speech"],
+            subTab: "Talk Mode",
+            disambiguation: "Hands-free conversation; separate from Chat Voice, Transcription, and Wake Word."
+        ),
+        .init(
+            id: "voice.talk.bargeIn",
+            tab: .voice,
+            section: "Talk Mode",
+            title: "Allow Barge-In",
+            keywords: ["interrupt", "barge in", "stop speaking"],
+            subTab: "Talk Mode",
+            disambiguation: "Hands-free conversation; separate from Chat Voice, Transcription, and Wake Word."
+        ),
+        .init(
+            id: "voice.talk.echo",
+            tab: .voice,
+            section: "Talk Mode",
+            title: "Echo Cancellation",
+            keywords: ["aec", "voice processing", "feedback"],
+            subTab: "Talk Mode",
+            disambiguation: "Hands-free conversation; separate from Chat Voice, Transcription, and Wake Word."
+        ),
+        .init(
+            id: "voice.talk.captions",
+            tab: .voice,
+            section: "Talk Mode",
+            title: "Show Captions",
+            keywords: ["transcript", "subtitles", "talk mode"],
+            subTab: "Talk Mode",
+            disambiguation: "Hands-free conversation; separate from Chat Voice, Transcription, and Wake Word."
+        ),
+        .init(
             id: "voice.tts.voice",
             tab: .voice,
             section: "Text to Speech",

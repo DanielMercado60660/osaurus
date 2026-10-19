@@ -335,7 +335,16 @@ public final class TTSService: ObservableObject {
     /// Starts a single-use incremental utterance with a snapshot of the current
     /// provider configuration. Supersedes any existing playback. A missing local
     /// model is reported through the handle's failed event; no implicit download.
-    public func beginStream(id: String) -> TTSStreamHandle {
+    public func beginStream(id: String, releasePolicy: TTSStreamReleasePolicy = .grouped) -> TTSStreamHandle {
+        makeStream(id: id, releasePolicy: releasePolicy, duplex: nil)
+    }
+
+    func beginTalkStream(id: String, duplex: TalkAudioEngine, voiceOverride: String? = nil) -> TTSStreamHandle {
+        makeStream(id: id, releasePolicy: .conversational, duplex: duplex, voiceOverride: voiceOverride)
+    }
+
+    private func makeStream(id: String, releasePolicy: TTSStreamReleasePolicy,
+                            duplex: TalkAudioEngine?, voiceOverride: String? = nil) -> TTSStreamHandle {
         stop()
         let config = TTSConfigurationStore.load()
         let manager = manager
@@ -348,10 +357,17 @@ public final class TTSService: ObservableObject {
                 self.outputLevel = level
             }
         }
+        duplex?.setOutputLevelHandler { [weak self] level in
+            Task { @MainActor [weak self] in
+                guard let self, self.activeStreamToken == token else { return }
+                self.outputLevel = level
+            }
+        }
+        let streamPlayer: any TTSStreamPlayer = if let duplex { duplex } else { streamPipeline }
         let handle = TTSStreamHandle(
-            id: id, player: streamPipeline,
+            id: id, player: streamPlayer,
             synthesize: { text, emit in
-                let voice = config.provider == .pocketTTS ? config.voice : config.remoteVoice
+                let voice = voiceOverride ?? (config.provider == .pocketTTS ? config.voice : config.remoteVoice)
                 let activity = MediaActivityLogger.beginSpeech(
                     text: text,
                     model: config.provider == .pocketTTS ? "pocket-tts" : config.remoteModel,
@@ -396,6 +412,7 @@ public final class TTSService: ObservableObject {
                     throw error
                 }
             },
+            releasePolicy: releasePolicy,
             onTerminal: { [weak self] in
                 guard let self, self.activeStreamToken == token else { return }
                 self.activeStreamToken = nil

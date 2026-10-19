@@ -205,6 +205,8 @@ final class ChatSession: ObservableObject {
     var assistantDeltas: AnyPublisher<AssistantDeltaEvent, Never> {
         assistantDeltaEvents.eraseToAnyPublisher()
     }
+    var rawAssistantDeltas: AnyPublisher<AssistantDeltaEvent, Never> { rawAssistantDeltaEvents.eraseToAnyPublisher() }
+    private let rawAssistantDeltaEvents = PassthroughSubject<AssistantDeltaEvent, Never>()
     private let assistantDeltaEvents = PassthroughSubject<AssistantDeltaEvent, Never>()
 
     @Published var isStreaming: Bool = false {
@@ -216,6 +218,7 @@ final class ChatSession: ObservableObject {
                 beginRunProgressMonitor()
             } else {
                 assistantDeltaEvents.send(stopRequested ? .cancelled : .finished)
+                rawAssistantDeltaEvents.send(stopRequested ? .cancelled : .finished)
                 ChatPerfTrace.shared.end()
                 endRunProgressMonitor()
             }
@@ -4439,6 +4442,10 @@ final class ChatSession: ObservableObject {
     }
 
     private func observeAssistantDeltas(from processor: StreamingDeltaProcessor, turnId: UUID) {
+        processor.onRawVisibleDelta = { [weak self] text in
+            guard let self, self.isStreaming, !self.stopRequested else { return }
+            self.rawAssistantDeltaEvents.send(.delta(turnId: turnId, text: text))
+        }
         processor.onVisibleDelta = { [weak self] text in
             guard let self, self.isStreaming, !self.stopRequested else { return }
             self.assistantDeltaEvents.send(.delta(turnId: turnId, text: text))
@@ -11463,7 +11470,7 @@ extension ChatView {
     /// or another message is already playing (don't interrupt).
     private func handleAssistantTurnCompleted(turnId: UUID?) {
         guard let turnId else { return }
-        guard session.autoSpeakAssistant else { return }
+        guard session.autoSpeakAssistant, !TalkModeController.shared.owns(session) else { return }
         guard TTSConfigurationStore.load().enabled else { return }
         guard TTSService.shared.isModelReady else { return }
         guard TTSService.shared.playingMessageId == nil else { return }

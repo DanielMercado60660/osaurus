@@ -646,6 +646,11 @@ public final class SpeechService: ObservableObject {
     @Published public var audioLevel: Float = 0.0
     /// Multicast, main-actor delivery; subscribers observe future events only.
     public var events: AnyPublisher<SpeechEvent, Never> { speechEvents.eraseToAnyPublisher() }
+    var talkEvents: AnyPublisher<TalkCaptureEvent, Never> { talkCaptureEvents.eraseToAnyPublisher() }
+    private let talkCaptureEvents = PassthroughSubject<TalkCaptureEvent, Never>()
+    private var workerGeneration = UUID()
+    private var captureGeneration = UUID()
+    private var talkAudio: TalkAudioEngine?
     private let speechEvents = PassthroughSubject<SpeechEvent, Never>()
 
     @Published public var isSpeechDetected: Bool = false {
@@ -923,11 +928,16 @@ public final class SpeechService: ObservableObject {
 
     /// Start streaming transcription
     public func startStreamingTranscription() async throws {
+        guard !TalkModeController.shared.isActive else {
+            throw SpeechError.transcriptionFailed("Stop talk mode before starting another microphone session.")
+        }
         if isRecording {
             print("[SpeechService] Already recording, skipping start")
             return
         }
 
+        let captureGeneration = UUID()
+        self.captureGeneration = captureGeneration
         if let worker = transcriptionWorker {
             print("[SpeechService] Stopping previous worker before restart")
             await worker.stop()
@@ -966,6 +976,9 @@ public final class SpeechService: ObservableObject {
         }
 
         try await ensureModelLoaded()
+        guard self.captureGeneration == captureGeneration, !TalkModeController.shared.isActive else {
+            throw SpeechError.transcriptionFailed("The microphone session was superseded.")
+        }
 
         guard let wrappedAsrManager = sendableAsrManager, let vadManager = vadManager else {
             throw SpeechError.modelNotLoaded
@@ -1010,6 +1023,13 @@ public final class SpeechService: ObservableObject {
                         targetDeviceId: targetDeviceId,
                         buffer: audioBuffer
                     )
+                    guard self.captureGeneration == captureGeneration, !TalkModeController.shared.isActive else {
+                        await Task.detached(priority: .userInitiated) {
+                            engine.stop()
+                            engine.inputNode.removeTap(onBus: 0)
+                        }.value
+                        throw CancellationError()
+                    }
                     self.audioEngine = engine
                     self.activeTapFormat = format
                     self.activeInputDeviceId = selectedId
@@ -1031,7 +1051,7 @@ public final class SpeechService: ObservableObject {
 
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    guard let self, self.isRecording else { return }
+                    guard let self, self.isRecording, self.talkAudio == nil else { return }
                     self.observeEngineConfiguration()
                     self.startEngineHealthMonitoring()
                 }
@@ -1039,7 +1059,7 @@ public final class SpeechService: ObservableObject {
                 startWorkerProcessing()
 
             } catch {
-                await teardownAudioEngine()
+                if self.captureGeneration == captureGeneration { await teardownAudioEngine() }
                 throw error
             }
         } else {
@@ -1078,18 +1098,88 @@ public final class SpeechService: ObservableObject {
                 startWorkerProcessing()
 
             } catch {
-                await teardownAudioEngine()
+                if self.captureGeneration == captureGeneration { await teardownAudioEngine() }
                 throw error
             }
         }
     }
 
+    /// The talk controller owns this capture lifetime. It has already paused
+    /// wake-word/continuous input before installing the shared duplex graph.
+    func startTalkTranscription(duplex: TalkAudioEngine, gate: TalkSpeechGate,
+                                echoCancellation: Bool) async throws -> Bool {
+        guard AudioInputManager.shared.selectedInputSource == .microphone else {
+            throw SpeechError.transcriptionFailed("Talk mode requires a microphone input, not system audio.")
+        }
+        if !microphonePermissionGranted {
+            guard await requestMicrophonePermission() else { throw SpeechError.microphonePermissionDenied }
+        }
+        try Task.checkCancellation()
+        try await ensureModelLoaded()
+        try Task.checkCancellation()
+        guard let manager = sendableAsrManager, let vadManager else { throw SpeechError.modelNotLoaded }
+        audioBuffer.clear()
+        audioBuffer.setActive(true)
+        currentTranscription = ""
+        confirmedTranscription = ""
+        isSpeechDetected = false
+        let selected = AudioInputManager.shared.selectedDeviceId
+        let deviceID = selected.flatMap { AudioInputManager.shared.getAudioDeviceId(for: $0) }
+        guard selected == nil || deviceID != nil else {
+            throw SpeechError.transcriptionFailed("The selected microphone is unavailable. Select another device in Voice Setup.")
+        }
+        let buffer = audioBuffer
+        talkAudio = duplex
+        let (format, aec) = try await duplex.start(
+            voiceProcessing: echoCancellation, deviceID: deviceID,
+            capture: { samples, level in
+                guard buffer.isActive else { return }
+                buffer.setLevel(level)
+                buffer.append(samples)
+            },
+            routeChanged: { [weak self, weak duplex] in
+                Task { @MainActor in
+                    guard let self, let duplex, self.talkAudio === duplex else { return }
+                    self.talkCaptureEvents.send(.failed("Audio device changed. Restart talk mode."))
+                }
+            })
+        try Task.checkCancellation()
+        transcriptionWorker = TranscriptionWorker(asrManager: manager, vadManager: vadManager,
+            audioBuffer: audioBuffer, inputFormat: format, talkGate: gate)
+        isRecording = true
+        startAudioLevelMonitoring()
+        startWorkerProcessing()
+        return aec
+    }
+
+    func stopTalkTranscription() async {
+        captureGeneration = UUID()
+        workerGeneration = UUID()
+        audioBuffer.setActive(false)
+        await transcriptionWorker?.stop()
+        transcriptionWorker = nil
+        if let talkAudio { await talkAudio.shutdown() }
+        talkAudio = nil
+        audioBuffer.clear()
+        isRecording = false
+        isSpeechDetected = false
+        currentTranscription = ""
+        confirmedTranscription = ""
+        audioLevel = 0
+    }
+
     /// Stop streaming transcription and get final result
     public func stopStreamingTranscription(force: Bool = false) async -> String {
+        captureGeneration = UUID()
+        if talkAudio != nil {
+            TalkModeController.shared.stop()
+            return ""
+        }
         print(
             "[SpeechService] Stopping streaming transcription (force: \(force), keepAlive: \(keepAudioEngineAlive))"
         )
 
+        workerGeneration = UUID()
         audioBuffer.setActive(false)
         await transcriptionWorker?.stop()
         transcriptionWorker = nil
@@ -1354,6 +1444,7 @@ public final class SpeechService: ObservableObject {
         lastRecoveryTime = Date()
         print("[SpeechService] Recovering audio engine (attempt \(recoveryAttempts)/\(maxRecoveryAttempts))...")
 
+        workerGeneration = UUID()
         audioBuffer.setActive(false)
         await transcriptionWorker?.stop()
         transcriptionWorker = nil
@@ -1380,6 +1471,8 @@ public final class SpeechService: ObservableObject {
 
     private func startWorkerProcessing() {
         guard let worker = transcriptionWorker else { return }
+        let generation = UUID()
+        workerGeneration = generation
         // `TranscriptionWorker` is a separate actor whose AsyncStream resumes on
         // the cooperative pool, so consume it on the main actor — otherwise these
         // @Published writes land off-main ("Updating ObservedObject from
@@ -1387,7 +1480,10 @@ public final class SpeechService: ObservableObject {
         Task { @MainActor in
             print("[SpeechService] Starting to consume worker updates")
             for await update in await worker.start() {
+                guard self.workerGeneration == generation else { break }
                 switch update {
+                case .talk(let event):
+                    self.talkCaptureEvents.send(event)
                 case .partial(let text):
                     self.currentTranscription = text
                     self.speechEvents.send(.partial(text))
@@ -1446,6 +1542,7 @@ public final class SpeechService: ObservableObject {
 // MARK: - Transcription Worker
 
 private enum TranscriptionUpdate: Sendable {
+    case talk(TalkCaptureEvent)
     case partial(String)
     case final(String)
     case speechActivity(Bool)
@@ -1462,6 +1559,10 @@ private actor TranscriptionWorker {
     private let needsConversion: Bool
     private var converter: AVAudioConverter?
 
+    private let talkGate: TalkSpeechGate?
+    private var recognitionTask: Task<Void, Never>?
+    private var recognitionID = UUID()
+    private var recognitionTasks: [UUID: Task<Void, Never>] = [:]
     private let vadThreshold: Float
     private let silenceThresholdSeconds: Double
     private let maxSegmentDurationSeconds: Double = 30.0
@@ -1476,8 +1577,10 @@ private actor TranscriptionWorker {
         vadManager: VadManager,
         audioBuffer: ThreadSafeAudioBuffer,
         inputFormat: AVAudioFormat,
-        sensitivity: VoiceSensitivity = .medium
+        sensitivity: VoiceSensitivity = .medium,
+        talkGate: TalkSpeechGate? = nil
     ) {
+        self.talkGate = talkGate
         self.asrManager = asrManager
         self.vadManager = vadManager
         self.audioBuffer = audioBuffer
@@ -1507,6 +1610,9 @@ private actor TranscriptionWorker {
     }
 
     func stop() {
+        for recognition in recognitionTasks.values { recognition.cancel() }
+        recognitionTasks.removeAll()
+        recognitionTask = nil
         task?.cancel()
         continuation?.finish()
         task = nil
@@ -1522,6 +1628,11 @@ private actor TranscriptionWorker {
             }
         } else {
             print("[TranscriptionWorker] Started (\(inputFormat.sampleRate)Hz, no conversion needed)")
+        }
+
+        if let talkGate {
+            await runTalkLoop(gate: talkGate)
+            return
         }
 
         var vadState = await vadManager.makeStreamState()
@@ -1607,6 +1718,99 @@ private actor TranscriptionWorker {
 
         print("[TranscriptionWorker] Exiting run loop, buffer active: \(audioBuffer.isActive)")
         continuation?.finish()
+    }
+
+    /// Capture/VAD never await ASR in talk mode. Segment-tagged recognition is
+    /// serialized separately, so a slow preview cannot block barge-in detection.
+    private func runTalkLoop(gate: TalkSpeechGate) async {
+        var vadState = await vadManager.makeStreamState()
+        var recent: [Float] = []
+        var utterance: [Float] = []
+        var segment = 0
+        var inSegment = false
+        var active = false
+        var lastSpeech = ProcessInfo.processInfo.systemUptime
+        var lastPreview = lastSpeech
+        while audioBuffer.isActive && !Task.isCancelled {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { break }
+            let fresh = convertTo16kHz(audioBuffer.getAndClear())
+            guard !fresh.isEmpty else { continue }
+            recent.append(contentsOf: fresh)
+            // Retain 256 ms of onset before VAD crosses the threshold.
+            if recent.count > VadManager.chunkSize { recent.removeFirst(recent.count - VadManager.chunkSize) }
+            if inSegment { utterance.append(contentsOf: fresh) }
+            guard recent.count == VadManager.chunkSize else { continue }
+            do {
+                let result = try await vadManager.processStreamingChunk(recent, state: vadState, config: .default)
+                vadState = result.state
+                let now = ProcessInfo.processInfo.systemUptime
+                let detected = gate.detects(result.probability, at: now)
+                if detected {
+                    if !inSegment {
+                        segment += 1
+                        inSegment = true
+                        utterance = recent
+                        lastPreview = now
+                    }
+                    lastSpeech = now
+                }
+                if detected != active {
+                    active = detected
+                    continuation?.yield(.speechActivity(detected))
+                    continuation?.yield(.talk(.activity(segment: segment, active: detected, at: now)))
+                }
+                if inSegment && !active && now - lastSpeech >= gate.silenceSeconds {
+                    recognizeTalk(utterance, segment: segment, final: true)
+                    utterance = []
+                    inSegment = false
+                } else if inSegment && now - lastPreview >= 1 && recognitionTask == nil {
+                    recognizeTalk(utterance, segment: segment, final: false)
+                    lastPreview = now
+                }
+                // Bound microphone memory without silently truncating a user turn.
+                if utterance.count > 16_000 * 120 {
+                    continuation?.yield(.talk(.failed("Talk turn exceeded two minutes. Restart talk mode for another turn.")))
+                    break
+                }
+            } catch {
+                continuation?.yield(.talk(.failed("Voice activity detection failed: \(error.localizedDescription)")))
+                break
+            }
+        }
+        continuation?.finish()
+    }
+
+    private func recognizeTalk(_ samples: [Float], segment: Int, final: Bool) {
+        let previous = recognitionTask
+        let id = UUID()
+        recognitionID = id
+        recognitionTask = Task { [weak self, asrManager] in
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            do {
+                var decoder = await SpeechDecoderStateFactory.make(for: asrManager.manager)
+                let result = try await asrManager.manager.transcribe(samples, decoderState: &decoder)
+                guard !Task.isCancelled else { return }
+                await self?.deliverTalkRecognition(result.text, segment: segment, final: final, id: id)
+            } catch {
+                guard !Task.isCancelled else { return }
+                await self?.failTalkRecognition(error.localizedDescription, id: id)
+            }
+        }
+        recognitionTasks[id] = recognitionTask
+    }
+
+    private func failTalkRecognition(_ message: String, id: UUID) {
+        recognitionTasks[id] = nil
+        continuation?.yield(.talk(.failed("Transcription failed: \(message)")))
+        if recognitionID == id { recognitionTask = nil }
+    }
+
+    private func deliverTalkRecognition(_ text: String, segment: Int, final: Bool, id: UUID) {
+        recognitionTasks[id] = nil
+        continuation?.yield(final ? .final(text) : .partial(text))
+        continuation?.yield(.talk(final ? .final(segment: segment, text: text) : .partial(segment: segment, text: text)))
+        if recognitionID == id { recognitionTask = nil }
     }
 
     private func convertTo16kHz(_ samples: [Float]) -> [Float] {
