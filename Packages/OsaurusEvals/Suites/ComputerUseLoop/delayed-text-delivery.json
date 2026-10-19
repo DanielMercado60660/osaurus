@@ -1,0 +1,29 @@
+{
+  "id": "computer_use_loop.delayed-text-delivery",
+  "domain": "computer_use_loop",
+  "label": "CU loop • settle delayed AX text before finishing",
+  "query": "Replace the Body with Hello again, then finish.",
+  "notes": "ScriptedOnly via scriptedActions. Two post-input AX captures still expose Hello agai; the third delivers the complete requested text. The existing settle boundary must poll before the done turn. Removing that boundary leaves the partial value and fails successValues. No second mutation or explicit observe is scripted.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "TextEdit",
+      "maxSteps": 4,
+      "elements": [
+        { "id": "body", "role": "textarea", "label": "Body", "value": "Old draft", "editable": true,
+          "editCaptureValues": ["Hello agai", "Hello agai"] }
+      ],
+      "successValues": [{ "id": "body", "equals": "Hello again" }],
+      "expectOutcome": ["done"],
+      "expectVerbsInOrder": ["type"],
+      "maxInvalidActions": 0,
+      "minVerifyChanged": 1,
+      "scoredMaxSteps": 2,
+      "scoredMaxModelTokens": 0,
+      "scriptedActions": [
+        "{\"verb\":\"type\",\"target\":{\"mark\":1},\"text\":\"Hello again\",\"replace\":true}",
+        "{\"verb\":\"done\",\"reason\":\"Body is Hello again.\"}"
+      ]
+    }
+  }
+}

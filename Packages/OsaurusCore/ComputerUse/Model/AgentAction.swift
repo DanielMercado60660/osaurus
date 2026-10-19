@@ -440,7 +440,7 @@ extension AgentAction {
                 validation.errorMessage
                 ?? "Your action did not match the required shape. Check the field names and types."
             if let field = validation.field, !field.isEmpty {
-                return .invalid(reason: shapeHint(for: field, base: base))
+                return .invalid(reason: shapeHint(for: field, base: base, received: raw[field]))
             }
             return .invalid(reason: base)
         }
@@ -502,7 +502,8 @@ extension AgentAction {
     /// values (a malformed action still fails). Helps any model self-correct
     /// instead of repeating the same wrong shape until the re-ask budget runs
     /// out (e.g. a 4B that emits `"mark": true`).
-    private static func shapeHint(for field: String, base: String) -> String {
+    private static func shapeHint(for field: String, base: String, received: Any? = nil) -> String {
+        let base = base + (received.map { "; got " + describeInvalidValue($0) } ?? "")
         switch field {
         case "mark":
             return base
@@ -512,11 +513,28 @@ extension AgentAction {
                 + " \"describe\": \"the <role> labelled <text>\" instead."
         case "target", "to":
             return base
-                + " `\(field)` is an object: {\"mark\": <number from [N]>} or"
-                + " {\"describe\": \"the <role> labelled <text>\"}."
+                + " `\(field)` must be an object like {\"mark\": 13} (use a number from [N]) or"
+                + " {\"describe\": \"the <role> labelled <text>\"}. Send the object itself, not a quoted string."
+        case "roles", "modifiers":
+            let example = field == "roles" ? #"["button", "textfield"]"# : #"["cmd", "shift"]"#
+            return base + " `\(field)` must be an array of strings like \(example), not a scalar string."
         default:
             return base
         }
+    }
+
+    /// Bounded JSON rendering keeps quotes/types unambiguous without echoing
+    /// arbitrarily large malformed payloads into the next model turn.
+    private static func describeInvalidValue(_ value: Any) -> String {
+        let kind: String
+        if value is String { kind = "string" }
+        else if value is NSNull { kind = "null" }
+        else if value is [Any] { kind = "array" }
+        else if value is [String: Any] { kind = "object" }
+        else { kind = "scalar" }
+        let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys])
+        let json = data.flatMap { String(data: $0, encoding: .utf8) } ?? String(describing: value)
+        return kind + " " + String(json.prefix(160)) + (json.count > 160 ? "…" : "")
     }
 
     private static func parseTarget(_ value: Any?) -> AgentTarget? {

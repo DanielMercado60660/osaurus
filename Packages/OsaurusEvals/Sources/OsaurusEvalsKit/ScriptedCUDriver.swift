@@ -12,9 +12,9 @@
 //  unknown ahead of time so a fixed snapshot queue can't line up.
 //
 //  Everything the harness needs (perceive → resolve → act → verify) reads
-//  back through `capture`, so a mutation immediately shows up as a changed
-//  value on the next perception — which is exactly the `verifyChanged`
-//  signal the loop and the scorer key off. No real Accessibility, no
+//  back through `capture`. Edits appear on the next perception unless the
+//  scene supplies `editCaptureValues` to simulate delayed AX delivery. The
+//  actual captured value drives `verifyChanged`, never the requested text. No real Accessibility, no
 //  SkyLight, no Screen Recording: a CU-loop case is reproducible and
 //  CI-safe apart from the model call itself.
 //
@@ -51,6 +51,8 @@ public actor ScriptedCUDriver: MacDriver {
         var revealCountdown: Int?
         /// Below the fold until the loop scrolls.
         let revealOnScroll: Bool
+        let editCaptureValues: [String]
+        var pendingEditValues: [String] = []
     }
 
     // MARK: - State
@@ -103,7 +105,8 @@ public actor ScriptedCUDriver: MacDriver {
                 clickFailuresRemaining: max(0, element.clickFailures ?? 0),
                 revealAfterCaptures: max(0, element.revealAfterCaptures ?? 0),
                 revealCountdown: nil,
-                revealOnScroll: element.revealOnScroll ?? false
+                revealOnScroll: element.revealOnScroll ?? false,
+                editCaptureValues: element.editCaptureValues ?? []
             )
         }
         // Seed focus on the first AX-visible editable field so a model that
@@ -371,7 +374,11 @@ public actor ScriptedCUDriver: MacDriver {
         guard cells[index].editable else {
             return .failure("That element isn't editable. Pick a text field.")
         }
-        cells[index].value = value
+        if cells[index].editCaptureValues.isEmpty {
+            cells[index].value = value
+        } else {
+            cells[index].pendingEditValues = cells[index].editCaptureValues + [value]
+        }
         focusedId = id
         return .ok(delta: focusDelta())
     }
@@ -427,6 +434,9 @@ public actor ScriptedCUDriver: MacDriver {
         // countdown reaches zero becomes visible in THIS snapshot, so the model
         // must wait/observe for it.
         for i in cells.indices {
+            if !cells[i].pendingEditValues.isEmpty {
+                cells[i].value = cells[i].pendingEditValues.removeFirst()
+            }
             if let cd = cells[i].revealCountdown, cd > 0 {
                 let next = cd - 1
                 cells[i].revealCountdown = next
