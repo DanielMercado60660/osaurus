@@ -66,6 +66,7 @@ struct SettingsSearchSelfFindProbe {
             ("Reach it from your phone", "server.phoneAccess"),
             ("Enabled for Agent", "voice.talk.agents"),
             ("End of Turn Silence", "voice.talk.silence"),
+            ("Smart end of turn", "voice.talk.smartTurn"),
             ("Allow Barge-In", "voice.talk.bargeIn"),
             ("Echo Cancellation", "voice.talk.echo"),
             ("Show Captions", "voice.talk.captions"),

@@ -15,12 +15,22 @@ import PackageDescription
 let package = Package(name: "TalkModeProof", platforms: [.macOS(.v15)], targets: [
 .target(name: "OsaurusCore"), .testTarget(name: "OsaurusCoreTests", dependencies: ["OsaurusCore"])])
 ''')
-for f in ['Services/Chat/ChatTurnGenerationControls.swift','Services/Avatar/AvatarMood.swift','Services/Avatar/AvatarPresentation.swift','Services/Voice/TalkModeReducer.swift','Models/Voice/TalkModeConfiguration.swift','Services/Voice/TTSStream.swift','Services/Voice/TalkAudioEngine.swift','Services/Voice/TalkBenchmarkConfiguration.swift','Services/Voice/TalkBenchmarkAudio.swift','Services/Voice/MarkdownStripper.swift','Utils/StreamingDeltaProcessor.swift','Models/Configuration/SettingsSearchIndex.swift','Models/Configuration/ManagementTab.swift','AppleApps/AppleApp.swift','Services/SearchService.swift']:
+for f in ['Services/Voice/SmartTurn/SmartTurnFeatures.swift','Services/Voice/SmartTurn/TalkSmartTurnPolicy.swift','Services/Voice/SmartTurn/SmartTurnResources.swift','Services/Chat/ChatTurnGenerationControls.swift','Services/Avatar/AvatarMood.swift','Services/Avatar/AvatarPresentation.swift','Services/Voice/TalkModeReducer.swift','Models/Voice/TalkModeConfiguration.swift','Services/Voice/TTSStream.swift','Services/Voice/TalkAudioEngine.swift','Services/Voice/TalkBenchmarkConfiguration.swift','Services/Voice/TalkBenchmarkAudio.swift','Services/Voice/MarkdownStripper.swift','Utils/StreamingDeltaProcessor.swift','Models/Configuration/SettingsSearchIndex.swift','Models/Configuration/ManagementTab.swift','AppleApps/AppleApp.swift','Services/SearchService.swift']:
     shutil.copy(core/f,src/Path(f).name)
 s=(core/'Managers/TTSService.swift').read_text(); chunk=s[s.index('enum TTSTextChunker {'):s.index('\nextension Notification.Name',s.index('enum TTSTextChunker {'))]; (src/'TTSTextChunker.swift').write_text('import Foundation\n'+chunk)
-for f in ['Voice/TalkLatencyTests.swift','Voice/TalkModeTests.swift','Voice/TalkModeRawDeltaTests.swift','Voice/TTSStreamTests.swift','Voice/TTSTextChunkerTests.swift','Configuration/SettingsSearchSelfFindProbe.swift']:
+for f in ['Voice/SmartTurnTests.swift','Voice/TalkLatencyTests.swift','Voice/TalkModeTests.swift','Voice/TalkModeRawDeltaTests.swift','Voice/TTSStreamTests.swift','Voice/TTSTextChunkerTests.swift','Configuration/SettingsSearchSelfFindProbe.swift']:
     shutil.copy(core/'Tests'/f,tests/Path(f).name)
 (src/'ProofStubs.swift').write_text('''import Foundation
+// Smart Turn MLX/provider boundary is inert in this isolated regression lane.
+struct SmartTurnPrediction: Sendable { let probability: Float; let threshold: Float }
+actor SmartTurnService {
+    static let shared = SmartTurnService()
+    func predict(samples: [Float], directory: URL) async throws -> SmartTurnPrediction { throw CancellationError() }
+}
+final class DirectDownloader: @unchecked Sendable {
+    func invalidate() {}
+    func download(from: URL, to: URL, expectedSize: Int64, onProgress: @escaping @Sendable (Int64, Int64) -> Void) async throws { throw CancellationError() }
+}
 func L(_ text: String) -> String { text }
 enum ModelOptionValue: Codable, Sendable, Equatable {
     case bool(Bool), string(String)
@@ -145,6 +155,7 @@ actor ModelRuntime {
     }
 }
 enum OsaurusPaths {
+    static func root() -> URL { URL(fileURLWithPath: "/tmp/osaurus-t03-proof-only") }
     static func voiceConfig() -> URL { URL(fileURLWithPath: "/tmp/osaurus-t03-proof-only") }
     static func ensureExistsSilent(_ url: URL) { try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true) }
 }

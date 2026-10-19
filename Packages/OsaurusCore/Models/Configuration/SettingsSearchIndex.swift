@@ -604,6 +604,15 @@ public enum SettingsSearchIndex {
             disambiguation: "Hands-free conversation; separate from Chat Voice, Transcription, and Wake Word."
         ),
         .init(
+            id: "voice.talk.smartTurn",
+            tab: .voice,
+            section: "Talk Mode",
+            title: "Smart end of turn",
+            keywords: ["semantic", "endpoint", "smart turn", "download", "complete thought", "32 MB"],
+            subTab: "Talk Mode",
+            disambiguation: "Local semantic end-of-turn detection for Talk Mode; falls back to End of Turn Silence."
+        ),
+        .init(
             id: "voice.talk.silence",
             tab: .voice,
             section: "Talk Mode",

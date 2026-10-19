@@ -522,6 +522,20 @@ Your voice data never leaves your computer.
 
 ## Talk mode
 
+**Voice → Talk Mode → Smart end of turn** is on by default when Smart Turn v3
+is present. The app uses existing Hugging Face snapshots in place, or downloads
+32 MB through the existing model transfer path into its auxiliary-model folder.
+The detector sees the last eight seconds of 16 kHz audio, checks at 250 ms of
+silence after at least 300 ms speech, and retries every 200 ms until the silence
+deadline. Automatic silence defaults to 900 ms with the model and 700 ms without;
+explicit saved silence values always win. Missing/failed models retain silence
+behavior. Failed inference reports a notice and disables semantic checks until
+Talk restarts. Stop, resumed speech, and rollover cancel/invalidate pending checks.
+MLX inference runs off-main under the shared Metal gate; it can wait behind an
+active GPU producer, while VAD and the silence deadline continue. The cached
+model remains charged to the auxiliary residency ledger for its real lifetime.
+
+
 In **Voice → Talk Mode**, enable the desired agent. Configure a speech model and
 microphone in Voice Setup and a working provider in Text To Speech (load PocketTTS
 before starting). Click the waveform-circle button beside the chat microphone, or
@@ -529,9 +543,9 @@ press **Control–Option–Command–T** globally. The shortcut uses the focused
 agent, falling back to the active agent and creating/focusing its chat window.
 Press it again to stop. Closing/switching the owned chat also stops talk mode.
 
-Talk mode continuously captures speech, waits for 700 ms silence and a final
+Talk mode continuously captures speech, uses Smart Turn when its local model is available, and waits for a final
 transcript, and sends through the normal ChatSession lifecycle. Final ASR starts
-speculatively after about 275 ms of silence; renewed speech invalidates that
+speculatively after about 250 ms with Smart Turn (275 ms without it); renewed speech invalidates that
 speculation, otherwise the result is reused at the configured endpoint. Speech shorter
 than 300 ms and empty or filler-only “uh”/“um” turns are ignored. The first complete
 assistant sentence is released to TTS immediately; after 500 ms without a sentence,
@@ -573,9 +587,12 @@ Other talk options apply immediately.
 records. Stage fields are milliseconds from `speechEnd`, the monotonic capture
 timestamp of the last VAD-positive frame:
 
-- `endOfTurnDecidedMs`: the capture worker commits its silence endpoint.
+- `endOfTurnDecidedMs`: the capture worker commits its semantic or silence endpoint.
+- `smartTurnChecks`: attempted semantic checks (including cancelled/failed checks).
+- `smartTurnProbability`: last accepted completion probability, absent if none completed.
+- `endOfTurnReason`: `smartTurn` or `silence`; old records leave these fields absent.
 - `asrFinalMs`: final ASR computation completes, even when speculative delivery
-  is withheld until the endpoint. Speculation starts at 275 ms silence on the
+  is withheld until the endpoint. Speculation starts at 250 ms with Smart Turn (275 ms without it) on the
   next capture/VAD iteration; actual execution can wait for serialized ASR.
   Resumed speech cancels speculation and invalidates its timestamp. For joined
   segments, ASR/endpoint timings use the latest completion across all segments.

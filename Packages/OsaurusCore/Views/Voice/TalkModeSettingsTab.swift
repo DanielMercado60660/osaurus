@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TalkModeSettingsTab: View {
     @ObservedObject private var agents = AgentManager.shared
+    @ObservedObject private var smartTurn = SmartTurnDownload.shared
     @State private var config = TalkModeConfigurationStore.load()
     @Environment(\.theme) private var theme
     @Environment(\.settingsLandingPending) private var pendingLanding
@@ -26,12 +27,32 @@ struct TalkModeSettingsTab: View {
                         }
                     }
                     .settingsLandingAnchor("voice.talk.agents")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Smart end of turn", isOn: Binding(
+                            get: { config.smartTurnEnabled && smartTurn.available },
+                            set: { config.smartTurnEnabled = $0 }))
+                            .disabled(!smartTurn.available)
+                        Text(smartTurn.available
+                             ? "Detects complete thoughts after a short pause. Uses the local Smart Turn v3 model."
+                             : "Smart Turn v3 is not downloaded. Talk mode uses silence detection.")
+                            .font(.caption).foregroundStyle(theme.secondaryText)
+                        if let progress = smartTurn.progress {
+                            ProgressView(value: progress)
+                            Button("Cancel download") { smartTurn.cancel() }
+                        } else if !smartTurn.available {
+                            Button("Download Smart Turn v3 (32 MB)") { smartTurn.start() }
+                        }
+                        if let error = smartTurn.error {
+                            Text(error).font(.caption).foregroundStyle(.red)
+                        }
+                    }
+                    .settingsLandingAnchor("voice.talk.smartTurn")
                     VStack(alignment: .leading) {
                         Text("End of Turn Silence").font(.headline)
-                        Slider(value: Binding(get: { Double(config.endOfTurnSilenceMs) },
+                        Slider(value: Binding(get: { Double(config.effectiveEndSilenceMs(smartTurnActive: config.smartTurnEnabled && smartTurn.available)) },
                                               set: { config.endOfTurnSilenceMs = Int($0) }),
                                in: 300...3000, step: 100)
-                        Text("\(config.endOfTurnSilenceMs) ms")
+                        Text("\(config.effectiveEndSilenceMs(smartTurnActive: config.smartTurnEnabled && smartTurn.available)) ms")
                     }
                     .settingsLandingAnchor("voice.talk.silence")
                     Toggle("Allow Barge-In", isOn: $config.bargeInEnabled)
@@ -42,7 +63,7 @@ struct TalkModeSettingsTab: View {
                         .settingsLandingAnchor("voice.talk.thinking")
                     Toggle("Show Captions", isOn: $config.showCaptions)
                         .settingsLandingAnchor("voice.talk.captions")
-                    Text("Changes save automatically. Changing silence or echo cancellation stops an active conversation; toggle talk mode again to apply. If voice processing is unavailable, talk mode uses a higher speech threshold during playback and a 300 ms echo cooldown.")
+                    Text("Changes save automatically. Changing silence, Smart end of turn, or echo cancellation stops an active conversation; toggle talk mode again to apply. If voice processing is unavailable, talk mode uses a higher speech threshold during playback and a 300 ms echo cooldown.")
                         .font(.caption).foregroundStyle(theme.secondaryText)
                 }
                 .padding(24)
@@ -53,7 +74,7 @@ struct TalkModeSettingsTab: View {
                 withAnimation { proxy.scrollTo(id, anchor: .center) }
             }
         }
-        .onAppear { config = TalkModeConfigurationStore.load() }
+        .onAppear { config = TalkModeConfigurationStore.load(); smartTurn.refresh() }
         // The empty-chat setup card can enable an agent while Settings stays
         // open. Refresh this editor so its next change preserves that update.
         .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
