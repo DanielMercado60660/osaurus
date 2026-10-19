@@ -60,6 +60,8 @@ cli:
 app: ts-helper
 	@$(MAKE) cli
 	@echo "Building app ($(SCHEME_APP))…"
+	@# Retired sidecar from older builds; codesign rejects unsigned non-code files in Helpers.
+	@rm -f "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-ts.sha256"
 	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_APP) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(NO_COVERAGE_FLAGS) $(XCODEBUILD_FLAGS)
 	@echo "Embedding CLI into App Bundle (Helpers)…"
 	# Copy osaurus-cli to osaurus.app/Contents/Helpers/osaurus
