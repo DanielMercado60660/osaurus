@@ -151,3 +151,16 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   "Think before speaking" talk setting (default Off, via the composer's
   explicit thinking mechanism, no template coercion) + verify speculative ASR.
 - Running: T15 FluidAudio 0.15.x upgrade, T16 talk latency (Codex).
+
+## 2026-10-19 (night) — FluidAudio 0.15.4
+
+- T15 merged: FluidAudio 0.14.1 → **0.15.4** (matches owner's mama-mei), reuses
+  the PocketTTS v2.1 cache (fused ANE flow decoder, one-shot cond prefill);
+  old flat layout still loads.
+- Talk benchmark, same model/inputs (warm turns, first token → first audio):
+  0.14.1: 753 / 801 / 1487 / 760 ms → **0.15.4: 92 / 123 / 593 / 93 ms**.
+  End-of-speech → first audio, warm: 0.14.1 2.84–3.60 s → 0.15.4 2.03–3.00 s.
+  First-token time unchanged (~2.0–2.9 s): dominated by model reasoning +
+  endpointing → T16.
+- T16 merged (per-stage telemetry + Think before speaking, default Off);
+  rebuilding + rerunning benchmark.
