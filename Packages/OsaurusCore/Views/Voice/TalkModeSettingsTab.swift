@@ -51,6 +51,12 @@ struct TalkModeSettingsTab: View {
                 withAnimation { proxy.scrollTo(id, anchor: .center) }
             }
         }
+        .onAppear { config = TalkModeConfigurationStore.load() }
+        // The empty-chat setup card can enable an agent while Settings stays
+        // open. Refresh this editor so its next change preserves that update.
+        .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
+            config = TalkModeConfigurationStore.load()
+        }
         .onChange(of: config) { _, value in TalkModeConfigurationStore.save(value) }
     }
 }

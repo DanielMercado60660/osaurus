@@ -14,14 +14,19 @@ public enum TalkModeConfigurationStore {
 
     public static func save(_ configuration: TalkModeConfiguration) {
         do {
-            OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(configuration).write(to: url, options: .atomic)
-            cached = configuration
-            NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
+            try saveThrowing(configuration)
         } catch {
             ToastManager.shared.error("Cannot save talk settings", message: error.localizedDescription)
         }
+    }
+
+    /// Setup callers surface the underlying write error inline and offer retry.
+    public static func saveThrowing(_ configuration: TalkModeConfiguration) throws {
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(configuration).write(to: url, options: .atomic)
+        cached = configuration
+        NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
     }
 }

@@ -253,11 +253,19 @@ public enum SettingsSearchIndex {
             keywords: ["cmd n", "new chat", "shortcut", "keyboard", "new window", "hotkey"]
         ),
         .init(
+            id: "settings.chat.makeItYours",
+            tab: .chat,
+            section: "Appearance",
+            title: "Show Make it yours",
+            keywords: ["make it yours", "not now", "setup card", "dismiss", "restore", "onboarding"],
+            disambiguation: "Post-onboarding empty-chat setup card visibility. Not now dismisses it; this toggle restores it."
+        ),
+        .init(
             id: "settings.chat.animatedAvatar",
             tab: .chat,
             section: "Appearance",
             title: "Show animated avatar",
-            keywords: ["dinosaur", "mascot", "companion", "floating panel", "lip sync", "animation"],
+            keywords: ["dinosaur", "mascot", "companion", "floating panel", "lip sync", "animation", "show your companion"],
             disambiguation: "Global animated companion and empty-chat avatar. Agent mascot color and custom images are chosen under Agents."
         ),
         .init(
@@ -591,7 +599,7 @@ public enum SettingsSearchIndex {
             tab: .voice,
             section: "Talk Mode",
             title: "Enabled for Agent",
-            keywords: ["hands free", "talk mode", "enable agent"],
+            keywords: ["hands free", "talk mode", "enable agent", "talk to it"],
             subTab: "Talk Mode",
             disambiguation: "Hands-free conversation; separate from Chat Voice, Transcription, and Wake Word."
         ),
@@ -956,7 +964,7 @@ public enum SettingsSearchIndex {
         ),
         .init(
             id: "server.phoneAccess", tab: .server, section: "Phone access over Tailscale",
-            title: "Phone access", keywords: ["phone", "tailscale", "mobile", "qr"], subTab: "Overview",
+            title: "Phone access", keywords: ["phone", "tailscale", "mobile", "qr", "reach it from your phone"], subTab: "Overview",
             disambiguation: "Private tailnet access. Separate from Mobile pairing and the public relay."
         ),
         .init(

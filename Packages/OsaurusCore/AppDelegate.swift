@@ -2564,6 +2564,7 @@ extension AppDelegate {
                     ChatLayoutTour.shared.holdAutoStart()
                     // Open ChatView after onboarding completes
                     self?.showChatOverlay()
+                    NotificationService.shared.requestAuthorizationAfterOnboarding()
                     Task { @MainActor [weak self] in
                         defer { ChatLayoutTour.shared.releaseAutoStart() }
                         try? await Task.sleep(for: .seconds(1))

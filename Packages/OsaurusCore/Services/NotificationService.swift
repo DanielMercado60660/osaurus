@@ -24,6 +24,7 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     private let categoryId = "OSU_MODEL_READY"
     private let actionOpenId = "OSU_OPEN_MODELS"
+    private var authorizationRequested = false
 
     private override init() {
         super.init()
@@ -46,9 +47,19 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         )
         center.setNotificationCategories([category])
 
-        // Request authorization (best-effort; user may have already granted/denied)
-        Task.detached {
-            try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+        requestAuthorizationAfterOnboarding()
+    }
+
+    /// Also called after the onboarding window closes, not when its persisted
+    /// completion bit flips (the farewell animation is still visible then).
+    func requestAuthorizationAfterOnboarding() {
+        guard NotificationAuthorizationPolicy.shouldRequest(
+            onboardingRequired: OnboardingService.shared.shouldShowOnboarding,
+            alreadyRequested: authorizationRequested
+        ), let center else { return }
+        authorizationRequested = true
+        Task {
+            try? await center.requestAuthorization(options: [.alert, .sound, .badge])
         }
     }
 
