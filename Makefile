@@ -9,8 +9,11 @@ PROJECT := App/osaurus.xcodeproj
 WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
+# Release builds must not carry coverage instrumentation (Xcode defaults it on
+# for some environments; it adds an __LLVM_COV segment and runtime overhead).
+NO_COVERAGE_FLAGS := ENABLE_CODE_COVERAGE=NO CLANG_COVERAGE_MAPPING=NO
 
-.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean wa-helper wa-helper-release bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat evals-pr-report evals-pr-report-baseline evals-watcher-report evals-scoreboard
+.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean ts-helper wa-helper wa-helper-release bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-deterministic evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat evals-pr-report evals-pr-report-baseline evals-watcher-report evals-scoreboard
 
 help:
 	@echo "Targets:"
@@ -45,28 +48,35 @@ help:
 	@echo "  evals-test     Run the OsaurusEvals harness unit tests (deterministic, token-free)"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  computer-use-evidence Run local Computer Use proof lane into build/computer-use-evidence/"
+	@echo "  ts-helper      Build the Tailscale phone helper and its SHA-256 pin (needs Go)"
 	@echo "  wa-helper      Build the WhatsApp bridge helper (osaurus-wa) into build/ (needs Go)"
 	@echo "  wa-helper-release  Package build/osaurus-wa-macos.zip and print pin digests"
 	@echo "  clean          Remove DerivedData build output"
 
 cli:
 	@echo "Building CLI ($(SCHEME_CLI))…"
-	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_CLI) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
+	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_CLI) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(NO_COVERAGE_FLAGS) $(XCODEBUILD_FLAGS)
 
 app: cli
 	@echo "Building app ($(SCHEME_APP))…"
-	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_APP) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
+	xcodebuild -workspace $(WORKSPACE) -scheme $(SCHEME_APP) -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(NO_COVERAGE_FLAGS) $(XCODEBUILD_FLAGS)
 	@echo "Embedding CLI into App Bundle (Helpers)…"
 	# Copy osaurus-cli to osaurus.app/Contents/Helpers/osaurus
 	mkdir -p "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers"
 	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-cli" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus"
 	@echo "Building plugin host helper (osaurus-plugin-host)…"
-	xcodebuild -workspace $(WORKSPACE) -scheme osaurus-plugin-host -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(XCODEBUILD_FLAGS)
+	xcodebuild -workspace $(WORKSPACE) -scheme osaurus-plugin-host -configuration $(CONFIG) -derivedDataPath $(DERIVED) build -quiet $(NO_COVERAGE_FLAGS) $(XCODEBUILD_FLAGS)
 	@echo "Embedding plugin host helper into App Bundle (Helpers)…"
 	# Killable out-of-process native plugin host (see PluginProcessHost.swift).
 	cp "$(DERIVED)/Build/Products/$(CONFIG)/osaurus-plugin-host" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
 	chmod +x "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-plugin-host"
+	@$(MAKE) ts-helper
+	@if command -v go >/dev/null 2>&1; then \
+		cp build/osaurus-ts build/osaurus-ts.sha256 "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/"; \
+	else \
+		rm -f "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-ts" "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Helpers/osaurus-ts.sha256"; \
+	fi
 	@echo "Bundling sandbox kernel (Resources/SandboxRuntime)…"
 	./scripts/build/fetch_sandbox_kernel.sh "$(DERIVED)/Build/Products/$(CONFIG)/osaurus.app/Contents/Resources/SandboxRuntime"
 
@@ -86,6 +96,17 @@ serve: install-cli
 
 status:
 	osaurus status
+
+# Local source build only: no runtime helper downloads. The binary and digest
+# are embedded together and covered by the final app bundle signature.
+ts-helper:
+	@if command -v go >/dev/null 2>&1; then \
+		mkdir -p build; \
+		(cd helpers/osaurus-ts && go build -trimpath -o ../../build/osaurus-ts .) && \
+		shasum -a 256 build/osaurus-ts | awk '{print $$1}' > build/osaurus-ts.sha256; \
+	else \
+		echo "Go not found; skipping osaurus-ts. Phone access will be unavailable."; \
+	fi
 
 # WhatsApp Web bridge helper (whatsmeow). Dev lane: build locally and point
 # the app at it with OSAURUS_WA_PATH (DEBUG builds only), mirroring the imsg

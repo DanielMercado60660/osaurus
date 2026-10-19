@@ -242,6 +242,7 @@ final class ServerController: ObservableObject {
 
             // Update state
             isRunning = true
+            TailscalePhoneAccessService.shared.serverStarted(port: configuration.port)
             serverHealth = .running
             lastErrorMessage = nil
             FeatureTelemetry.serverStarted()
@@ -290,6 +291,7 @@ final class ServerController: ObservableObject {
 
     /// Stops the running server
     func stopServer() async {
+        TailscalePhoneAccessService.shared.serverStopped()
         // Bridge grants authenticate against this server instance. Never let
         // one survive a stop/restart boundary, even if the server already
         // finished closing by the time this call arrives.
@@ -320,6 +322,7 @@ final class ServerController: ObservableObject {
 
     /// Ensures the server is properly shut down before app termination
     func ensureShutdown() async {
+        TailscalePhoneAccessService.shared.serverStopped()
         await ClaudeCodeBridgeGrantStore.shared.revokeAll()
         guard serverActor != nil else { return }
 
@@ -656,6 +659,7 @@ final class ServerController: ObservableObject {
 
     /// Handles server startup errors
     private func handleServerError(_ error: Error) {
+        TailscalePhoneAccessService.shared.serverStopped()
         print("[Osaurus] Failed to start server: \(error)")
         MobileConnectLog.write("server: FAILED to start on port \(configuration.port): \(error)")
         isRunning = false

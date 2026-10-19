@@ -66,6 +66,10 @@ struct SettingsSearchSelfFindProbe {
             ("Show Captions", "voice.talk.captions"),
 
             ("Show animated avatar", "settings.chat.animatedAvatar"),
+            ("Phone access", "server.phoneAccess"),
+            ("Sign in to Tailscale", "server.phoneAccess.login"),
+            ("Allowed Tailscale logins", "server.phoneAccess.logins"),
+            ("Save allowed logins", "server.phoneAccess.saveLogins"),
             ("Border Color", "themes.borders.color"),
             ("Border Width", "themes.borders.width"),
             ("Border Opacity", "themes.borders.opacity"),

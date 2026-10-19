@@ -235,3 +235,26 @@ Settings save automatically. Silence and echo changes stop active talk mode; sta
 for the new capture settings. Toggle with the waveform circle beside the chat mic or
 **Control–Option–Command–T**. Talk mode pauses Wake Word and supersedes continuous Chat Voice.
 It requires a microphone input, downloaded speech model, and configured Text To Speech engine.
+
+### Server → Overview → Phone access over Tailscale
+
+**Phone access** is off by default. Enable it to start the local HTTP server and
+its bundled `osaurus-ts` helper. **Sign in to Tailscale** opens the helper's
+interactive login URL; authenticate once, then scan the phone URL QR code with a
+phone on your tailnet. The node (`osaurus-<Mac hostname>`) persists across restarts.
+This path does not use `agent.osaurus.ai`, port forwarding, or a public listener.
+
+**Allowed Tailscale logins** is a comma-separated list of tailnet login names.
+Empty means the login that authenticated the node. These users receive owner
+access, including the built-in agent. **Save allowed logins** applies immediately
+by restarting the helper and rotating its launch secret. Disable **Phone access**
+to stop the helper; the tailnet node state is retained for next time.
+
+The phone page supports an agent picker, streaming chat, safe basic Markdown,
+and Hold to talk using the Mac's `/audio/transcriptions` endpoint (configure a
+speech model on the Mac first). There is currently no HTTP speech synthesis
+endpoint, so audio playback is not offered. HTTPS uses tailnet certificates;
+when unavailable, HTTP still travels inside Tailscale but browser microphone and
+PWA features require HTTPS. On iOS Safari, use Share → Add to Home Screen.
+A missing helper requires a build with Go (`make app`); no helper is downloaded at
+runtime. If a helper exits, the status shows the error; toggle off/on to retry.

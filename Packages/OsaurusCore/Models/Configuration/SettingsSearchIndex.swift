@@ -955,6 +955,26 @@ public enum SettingsSearchIndex {
                 "macOS grants (TCC). Not the Tools catalog Auto/Ask/Deny policies, and not Chat folder-tool permissions."
         ),
         .init(
+            id: "server.phoneAccess", tab: .server, section: "Phone access over Tailscale",
+            title: "Phone access", keywords: ["phone", "tailscale", "mobile", "qr"], subTab: "Overview",
+            disambiguation: "Private tailnet access. Separate from Mobile pairing and the public relay."
+        ),
+        .init(
+            id: "server.phoneAccess.login", tab: .server, section: "Phone access over Tailscale",
+            title: "Sign in to Tailscale", keywords: ["phone", "tailscale login"], subTab: "Overview",
+            disambiguation: "Private tailnet access. Separate from Mobile pairing and the public relay."
+        ),
+        .init(
+            id: "server.phoneAccess.logins", tab: .server, section: "Phone access over Tailscale",
+            title: "Allowed Tailscale logins", keywords: ["phone", "allowlist", "tailnet owner"], subTab: "Overview",
+            disambiguation: "Private tailnet access. Separate from Mobile pairing and the public relay."
+        ),
+        .init(
+            id: "server.phoneAccess.saveLogins", tab: .server, section: "Phone access over Tailscale",
+            title: "Save allowed logins", keywords: ["phone", "save", "allowlist"], subTab: "Overview",
+            disambiguation: "Private tailnet access. Separate from Mobile pairing and the public relay."
+        ),
+        .init(
             id: "server.peerInference",
             tab: .server,
             title: "Share my models for inference",

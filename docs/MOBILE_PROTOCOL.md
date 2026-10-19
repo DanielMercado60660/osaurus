@@ -13,6 +13,13 @@ Related: [`IDENTITY.md`](IDENTITY.md) (identity model, key derivation),
 [`SECURE_CHANNEL.md`](SECURE_CHANNEL.md) (E2E channel internals),
 [`OSAURUS_WORKSPACES.md`](OSAURUS_WORKSPACES.md) (workspace sharing).
 
+The fork also provides a browser client at `/phone` through the opt-in embedded
+Tailscale helper (Server → Overview → Phone access). That transport authenticates
+each tailnet peer with WhoIs and the owner's login allowlist, then forwards over
+loopback with a per-launch capability. It uses the existing agent streaming and
+audio transcription APIs; it does not use the public relay or the mobile pairing
+flow below. See [Phone access settings](../Packages/OsaurusCore/Resources/Guide/guide-settings.md).
+
 ---
 
 ## Table of contents
