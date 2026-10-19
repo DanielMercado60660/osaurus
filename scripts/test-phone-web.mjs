@@ -13,9 +13,16 @@ class Element {
   replaceChildren(...items) { this._text='';this.children=items; }
   addEventListener(type,fn) { this.handlers[type]=fn; }
   setAttribute(name,value) { this[name]=value; }
+  getContext() { return this.context??=mockCanvasContext(); }
   focus() {}
   setPointerCapture() {}
 }
+function mockCanvasContext() {
+  const calls=[];
+  const target={calls,createLinearGradient:()=>({addColorStop(){}})};
+  return new Proxy(target,{get(obj,key){if(!(key in obj))obj[key]=(...args)=>calls.push([key,...args]);return obj[key];}});
+}
+const avatarSource=fs.readFileSync(new URL('../Packages/OsaurusCore/Resources/Phone/phone-avatar.js',import.meta.url),'utf8');
 const voiceSource=fs.readFileSync(new URL('../Packages/OsaurusCore/Resources/Phone/phone-voice.js',import.meta.url),'utf8');
 const source=fs.readFileSync(new URL('../Packages/OsaurusCore/Resources/Phone/phone-app.js',import.meta.url),'utf8');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -27,19 +34,20 @@ async function page(run, voice = false, secure = true) {
     stop(){this.state='inactive';this.ondataavailable({data:new Blob(['audio'])});this.onstop();}
   }
   const tracks=[{stop(){}}];
-  const elements=new Map(['agents','status','chat','composer','prompt','mic','stop','send','new','speaker','talk','voice-hint'].map(id=>[id,new Element(id==='agents'?'select':'div')]));
+  const elements=new Map(['agents','status','chat','composer','prompt','mic','stop','send','new','speaker','talk','voice-hint','avatar-toggle','avatar-small','companion-toggle','avatar-large','companion-stage','companion-caption'].map(id=>[id,new Element(id==='agents'?'select':'div')]));
   const requests=[];
   const context=vm.createContext({
     document:{getElementById:id=>elements.get(id),createElement:tag=>new Element(tag),createTextNode:text=>({textContent:text}),addEventListener(){}},
-    window:{isSecureContext:secure,AudioContext:voice?MockAudioContext:undefined,MediaRecorder:voice?Recorder:undefined},MediaRecorder:Recorder,
+    window:{isSecureContext:secure,AudioContext:voice?MockAudioContext:undefined,MediaRecorder:voice?Recorder:undefined,matchMedia:()=>({matches:false,addEventListener(){}})},MediaRecorder:Recorder,
+    requestAnimationFrame:()=>1,cancelAnimationFrame(){},
     navigator:voice?{mediaDevices:{getUserMedia:async()=>({getTracks:()=>tracks})}}:{},TextDecoder,AbortController,Blob,FormData,URL,DOMException,performance,setInterval,clearInterval,
     fetch:async(url,options)=>{
-      if(url==='/agents') return Response.json({agents:[{id:'agent-1',name:'My agent'}]});
+      if(url==='/agents') return Response.json({agents:[{id:'agent-1',name:'My agent',avatar:'purple'}]});
       if(url==='/phone/capabilities') return Response.json({transcription:true,speech:true});
       requests.push({url,options});return run(url,options);
     },
   });
-  vm.runInContext(voiceSource,context);vm.runInContext(source,context);await tick();
+  vm.runInContext(voiceSource,context);vm.runInContext(avatarSource,context);vm.runInContext(source,context);await tick();
   return {context,requests,$:id=>elements.get(id),async send(text){elements.get('prompt').value=text;await elements.get('composer').handlers.submit({preventDefault(){}});}};
 }
 function sse(text,done=true){
@@ -115,6 +123,7 @@ test('Markdown reveals actual destination host and renders malformed URLs as tex
 class MockAudioContext {
   static instances=[];
   constructor(){this.currentTime=0;this.state='running';this.destination={};this.nodes=[];MockAudioContext.instances.push(this);}
+  createAnalyser(){return {fftSize:1024,connect(){},disconnect(){this.disconnected=true;},getFloatTimeDomainData(samples){samples.fill(.1);}};}
   async resume(){this.state='running';}
   createBuffer(channels,length,rate){const data=new Float32Array(length);return {duration:length/rate,getChannelData:()=>data,data};}
   createBufferSource(){
@@ -305,4 +314,134 @@ test('long punctuated sentences and final Markdown tails respect synthesis reque
     const split=new SentenceRelease();const chunks=[...split.append(text,0),...split.finish()];
     assert.ok(chunks.length>1);assert.ok(chunks.every(x=>x.length<=1000));
   }
+});
+
+function avatarHarness(reduced=false) {
+  let now=0,nextID=0;
+  const frames=new Map(),listeners={},motion={matches:reduced,addEventListener(type,fn){this.changed=fn;}};
+  const images=[];
+  const document={hidden:false,addEventListener(type,fn){listeners[type]=fn;}};
+  const context=vm.createContext({document,window:{devicePixelRatio:2,matchMedia:()=>motion},performance:{now:()=>now},
+    requestAnimationFrame:fn=>{frames.set(++nextID,fn);return nextID;},cancelAnimationFrame:id=>frames.delete(id),
+    Image:class{constructor(){images.push(this);this.naturalWidth=200;this.naturalHeight=100;}}});
+  vm.runInContext(avatarSource,context);
+  return {context,frames,images,motion,document,types:vm.runInContext('({PhoneAvatarState,PhoneCompanion,drawPhoneAvatar,phoneMouth,phoneAccessory})',context),
+    advance(time){now=time;const callbacks=[...frames.values()];frames.clear();callbacks.forEach(fn=>fn(now));},
+    hide(hidden){document.hidden=hidden;listeners.visibilitychange();}};
+}
+
+test('avatar mood precedence preserves speaking and listening levels over thinking/error',()=>{
+  const {types}=avatarHarness(),state=new types.PhoneAvatarState();
+  let frame=state.frame({speaking:true,listening:true,thinking:true,error:true,outputLevel:.8},0,1000);
+  assert.equal(frame.mood,'speaking');assert.ok(frame.mouth>.79);
+  frame=state.frame({listening:true,thinking:true,error:true,inputLevel:.6},100,1000);
+  assert.equal(frame.mood,'listening');assert.equal(frame.mouth,0);assert.ok(frame.level>.59);
+  assert.equal(state.frame({thinking:true,error:true},200,100).mood,'thinking');
+  assert.equal(state.frame({error:true},300,100).mood,'error');
+  assert.equal(state.frame({},400,100).mood,'idle');
+});
+
+test('avatar reaction priority, exact expiry and celebration suppression match T09',()=>{
+  const {types}=avatarHarness(),state=new types.PhoneAvatarState();
+  state.react('happy',0);assert.equal(state.frame({listening:true},100,100).reaction,'happy');
+  assert.equal(state.frame({speaking:true,outputLevel:1},200,100).reaction,null);
+  assert.equal(state.frame({thinking:true},300,100).reaction,null);
+  state.react('oops',400);state.react('happy',500);
+  assert.equal(state.frame({error:true},600,100).reaction,'oops');
+  state.react('surprised',700);state.react('oops',800);
+  assert.equal(state.frame({speaking:true},1599,100).reaction,'surprised');
+  assert.equal(state.frame({},1600,1).reaction,null);
+  state.react('happy',1600);assert.equal(state.frame({},3400,100).reaction,null);
+});
+
+test('mouth clamps invalid levels; smoothing is elapsed-time based',()=>{
+  const {types}=avatarHarness();
+  for(const value of [NaN,Infinity,-1])assert.equal(types.phoneMouth(value),0);
+  assert.equal(types.phoneMouth(2),1);assert.equal(types.phoneMouth(.4),.4);
+  const slow=new types.PhoneAvatarState(),fast=new types.PhoneAvatarState();
+  const a=slow.frame({speaking:true,outputLevel:1},100,100);
+  for(let i=0;i<10;i++)fast.frame({speaking:true,outputLevel:1},i*10,10);
+  assert.ok(Math.abs(a.mouth-fast.level)<1e-10);
+  const invalid=slow.frame({speaking:true,outputLevel:NaN},200,100);
+  assert.ok(Number.isFinite(invalid.mouth));assert.ok(invalid.mouth<a.mouth);
+});
+
+test('mock canvas covers every mood, reaction and accessory; reduced pose is time invariant',()=>{
+  const {types}=avatarHarness();
+  for(const [id,accessory] of [['blue','scarf'],['red','scarf'],['purple','glasses'],['orange','glasses'],['green','leaf'],['yellow','leaf'],[null,'none']]){
+    assert.equal(types.phoneAccessory(id),accessory);
+    for(const mood of ['idle','listening','thinking','speaking','error'])for(const reaction of [null,'happy','oops','surprised']){
+      const canvas=new Element('canvas');canvas.width=canvas.height=320;
+      types.drawPhoneAvatar(canvas,{mood,reaction,level:.7,mouth:mood==='speaking'?.7:0,reduceMotion:false,time:1},id);
+      assert.ok(canvas.context.calls.some(call=>call[0]==='ellipse'));
+    }
+  }
+  const first=new Element(),second=new Element();first.width=first.height=second.width=second.height=320;
+  for(const [canvas,time] of [[first,10],[second,90]])types.drawPhoneAvatar(canvas,{mood:'speaking',reaction:'happy',level:.7,mouth:.7,reduceMotion:true,time},'blue');
+  assert.deepEqual(first.context.calls,second.context.calls);
+  assert.ok(first.context.calls.some(call=>call[0]==='ellipse'&&call[1]===83&&call[3]===14));
+});
+
+test('hidden page cancels animation; reduced-motion idle has no animation loop',()=>{
+  const h=avatarHarness(),avatar=new h.types.PhoneCompanion(new Element(),new Element(),new Element());
+  assert.equal(h.frames.size,1);h.hide(true);assert.equal(h.frames.size,0);
+  avatar.setInput({speaking:true,outputLevel:.8});assert.equal(h.frames.size,0);
+  h.hide(false);assert.equal(h.frames.size,1);h.advance(100);
+  h.motion.matches=true;h.motion.changed();avatar.setInput({});assert.equal(h.frames.size,0);
+  avatar.react('happy');assert.equal(h.frames.size,1);h.advance(2000);assert.equal(h.frames.size,0);
+});
+
+test('custom image uses same-origin endpoint, ignores stale image loads, and draws reactive ring',()=>{
+  const h=avatarHarness(),small=new Element(),large=new Element(),avatar=new h.types.PhoneCompanion(small,large,new Element());
+  avatar.setAgent({id:'a/b',avatar:'green',custom_avatar:true});const old=h.images[0];
+  assert.equal(old.src,'/agents/a%2Fb/avatar');
+  avatar.setAgent({id:'next',avatar:'red',custom_avatar:true});old.onload();assert.equal(avatar.image,null);
+  h.images[1].onload();avatar.setActive(true);avatar.setInput({speaking:true,outputLevel:1});h.advance(1000);
+  assert.equal(avatar.image,h.images[1]);assert.ok(large.context.calls.some(c=>c[0]==='drawImage'));
+  assert.ok(large.context.calls.some(c=>c[0]==='ellipse'&&c[3]>66));
+  avatar.setAgent({id:'no-image',avatar:'yellow'});assert.equal(avatar.image,null);
+});
+
+test('playback meter and captions use the audible segment clock, reset and disconnect on interrupt',async()=>{
+  const context=new MockAudioContext(),frames=[];
+  context.createBufferSource=()=>({connect(to){this.destination=to;},disconnect(){},stop(){},start(at){this.at=at;context.nodes.push(this);}});
+  const queue=new PhoneSpeechQueue(context,async()=>pcm([0,1]),()=>{},frame=>frames.push(frame));
+  queue.enqueue('First.');queue.enqueue('Second.');await queue.tail;
+  assert.equal(context.nodes[0].destination,queue.analyser);
+  queue.samplePlayback();assert.equal(frames.at(-1).speaking,false);assert.equal(frames.at(-1).text,'');
+  context.currentTime=context.nodes[0].at;queue.samplePlayback();assert.equal(frames.at(-1).text,'First.');assert.ok(frames.at(-1).level>.59);
+  context.currentTime=context.nodes[1].at;queue.samplePlayback();assert.equal(frames.at(-1).text,'Second.');
+  queue.interrupt();await queue.finish();
+  assert.equal(queue.meterTimer,null);assert.equal(queue.analyser.disconnected,true);assert.equal(queue.segments.size,0);
+  assert.equal(frames.at(-1).level,0);assert.equal(frames.at(-1).text,'');
+});
+
+test('companion tap expands talk, then stops it and shows the interrupt reaction',async()=>{
+  const p=await page(()=>sse('ok'),true);
+  assert.equal(vm.runInContext('companion.mascot',p.context),'purple');
+  p.context.captureUtterance=async(context,signal)=>new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('Stopped','AbortError'))));
+  const loop=p.$('avatar-toggle').onclick();await tick();
+  assert.equal(p.$('companion-stage').hidden,false);assert.equal(p.$('avatar-toggle').hidden,true);
+  assert.equal(vm.runInContext('companion.input.listening',p.context),true);
+  await p.$('companion-toggle').onclick();await loop;
+  assert.equal(p.$('companion-stage').hidden,true);assert.equal(p.$('avatar-toggle').hidden,false);
+  assert.equal(vm.runInContext('companion.state.reaction',p.context),'surprised');assert.equal(p.$('companion-caption').textContent,'');
+});
+
+test('completed and failed turns publish happy/oops; captions are plain text',async()=>{
+  const p=await page(()=>sse('Hello.'));await p.send('hi');
+  assert.equal(vm.runInContext('companion.state.reaction',p.context),'happy');
+  const failed=await page(()=>Response.json({error:{message:'Failed'}},{status:503}));await failed.send('hi');
+  assert.equal(vm.runInContext('companion.state.reaction',failed.context),'oops');
+  assert.equal(vm.runInContext('companion.input.error',failed.context),true);
+  vm.runInContext('companion.setCaption("<img src=x onerror=alert(1)>")',p.context);
+  assert.equal(p.$('companion-caption').children.length,0);
+});
+
+test('output graph setup failure reports oops and unlocks the composer',async()=>{
+  const p=await page(()=>sse('ok'),true);await p.$('speaker').onclick();
+  vm.runInContext('audioContext.createAnalyser=()=>{throw new Error("Output graph unavailable");}',p.context);
+  await p.send('hello');assert.match(p.$('status').textContent,/Output graph unavailable/);
+  assert.equal(p.$('send').disabled,false);assert.equal(p.$('stop').hidden,true);
+  assert.equal(vm.runInContext('companion.state.reaction',p.context),'oops');
 });

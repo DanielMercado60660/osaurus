@@ -2,6 +2,13 @@
 const $ = id => document.getElementById(id);
 let history = [], controller, recording, micStream, holding = false, busy = false;
 let audioContext, speechQueue, speakerEnabled=false, talkActive=false, talkController;
+const agentsByID=new Map();
+const companion=new PhoneCompanion($('avatar-small'),$('avatar-large'),$('companion-caption'));
+function companionMood(input) { companion.setInput(input); }
+function companionError(error) {
+  companionMood(error.name==='AbortError'?{}:{error:true});
+  companion.setCaption('');companion.react(error.name==='AbortError'?'surprised':'oops');
+}
 function unlockAudio() {
   if(!audioContext) audioContext=new (window.AudioContext||window.webkitAudioContext)();
   // Invoke resume synchronously inside the gesture, including on iOS Safari.
@@ -15,8 +22,15 @@ function voiceButtons() {
   $('speaker').setAttribute('aria-pressed',String(speakerEnabled));
   $('talk').textContent=talkActive?'End talk / Interrupt':'Talk mode';
   $('talk').setAttribute('aria-pressed',String(talkActive));
+  $('avatar-toggle').hidden=talkActive;$('companion-stage').hidden=!talkActive;
+  $('avatar-toggle').disabled=$('talk').hidden||busy||!!talkController||!$('agents').value;
+  companion.setActive(talkActive);
 }
-function stopVoice() { talkActive=false;talkController?.abort();controller?.abort();speechQueue?.interrupt();voiceButtons(); }
+function stopVoice() {
+  const interrupted=talkActive||busy;
+  talkActive=false;talkController?.abort();controller?.abort();speechQueue?.interrupt();
+  companionMood({});companion.setCaption('');if(interrupted)companion.react('surprised');voiceButtons();
+}
 $('speaker').onclick=async()=>{
   try {
     if(!speakerEnabled)await unlockAudio();
@@ -63,7 +77,7 @@ function message(role, text) {
 }
 function setBusy(value) {
   busy=value; const locked=value||!!talkController; $('send').disabled=locked; $('agents').disabled=locked; $('new').disabled=locked;
-  $('mic').disabled=locked&&!holding; $('stop').hidden=!locked;
+  $('mic').disabled=locked&&!holding; $('stop').hidden=!locked;voiceButtons();
 }
 async function checked(response) {
   if (!response.ok) { let detail = await response.text(); try { const j=JSON.parse(detail); detail=j.error?.message||j.message||detail; } catch {} throw new Error(`${response.status}: ${detail.slice(0,400)}`); }
@@ -75,12 +89,16 @@ async function sendMessage(text=$('prompt').value.trim()) {
   $('prompt').value=''; message('user',text);
   const turn=[...history,{role:'user',content:text}], output=message('assistant','…'); let answer='', ended=false;
   controller=new AbortController(); setBusy(true); status(talkActive?'Thinking…':'Agent is working…');
-  const release=new SentenceRelease();let speechTimer, success=false;
-  const queue=speakerEnabled?new PhoneSpeechQueue(audioContext,fetch,()=>status('Speaking…')):null;
-  speechQueue=queue;
+  companionMood({thinking:true});companion.setCaption('');
+  const release=new SentenceRelease();let speechTimer, success=false, queue=null;
   const speak=sentences=>{if(speakerEnabled)for(const sentence of sentences)queue?.enqueue(sentence);};
-  if(queue)speechTimer=setInterval(()=>speak(release.release()),50);
   try {
+    queue=speakerEnabled?new PhoneSpeechQueue(audioContext,fetch,()=>status('Speaking…'), playback=>{
+      companionMood({thinking:true,speaking:playback.speaking,outputLevel:playback.level});
+      companion.setCaption(playback.text);
+    }):null;
+    speechQueue=queue;
+    if(queue)speechTimer=setInterval(()=>speak(release.release()),50);
     const response=await checked(await fetch(`/agents/${encodeURIComponent(agent)}/run`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:turn,stream:true}),signal:controller.signal}));
     const reader=response.body.getReader(), decoder=new TextDecoder(); let buffer='';
     function frame(raw) {
@@ -98,8 +116,8 @@ async function sendMessage(text=$('prompt').value.trim()) {
     clearInterval(speechTimer);speak(release.finish());
     await queue?.finish();
     if(controller.signal.aborted)throw new DOMException('Stopped','AbortError');
-    history=[...turn,{role:'assistant',content:answer}]; success=true;status('Ready');
-  } catch(error) { controller?.abort(); queue?.interrupt(); status(error.name==='AbortError'?'Stopped. Partial reply was not added to history.':error.message); if(!answer) output.textContent='No completed reply.'; }
+    history=[...turn,{role:'assistant',content:answer}]; success=true;status('Ready');companionMood({});companion.react('happy');
+  } catch(error) { controller?.abort(); queue?.interrupt(); companionError(error);status(error.name==='AbortError'?'Stopped. Partial reply was not added to history.':error.message); if(!answer) output.textContent='No completed reply.'; }
   finally{clearInterval(speechTimer); controller=null;speechQueue=null;setBusy(false);if(!talkActive)$('prompt').focus();}
   return success;
 }
@@ -114,10 +132,10 @@ $('talk').onclick=async()=>{
   try {
     await unlockAudio();
     while(!signal.aborted) {
-      status('Listening…');
-      const clip=await captureUtterance(audioContext,signal);
+      status('Listening…');companionMood({listening:true});
+      const clip=await captureUtterance(audioContext,signal,level=>companionMood({listening:true,inputLevel:level}));
       if(signal.aborted)break;
-      status('Thinking…');setBusy(true);
+      status('Thinking…');companionMood({thinking:true});setBusy(true);
       const form=new FormData();form.append('file',clip,clip.type.includes('mp4')?'recording.m4a':'recording.webm');
       const result=await (await checked(await fetch('/audio/transcriptions',{method:'POST',body:form,signal}))).json();
       if(signal.aborted)break;
@@ -125,10 +143,12 @@ $('talk').onclick=async()=>{
       if(!result.text?.trim())continue;
       if(!await sendMessage(result.text.trim()))break;
     }
-  }catch(error){status(error.name==='AbortError'?'Stopped.':error.message);}
+  }catch(error){companionError(error);status(error.name==='AbortError'?'Stopped.':error.message);}
   finally{talkActive=false;talkController=null;voiceButtons();setBusy(false);}
 };
-function clearChat(){history=[];$('chat').replaceChildren();status('New chat');}
+$('avatar-toggle').onclick=()=>{if(!$('avatar-toggle').disabled)return $('talk').onclick();};
+$('companion-toggle').onclick=()=>$('talk').onclick();
+function clearChat(){history=[];$('chat').replaceChildren();companionMood({});companion.setAgent(agentsByID.get($('agents').value));status('New chat');}
 $('new').onclick=clearChat; $('agents').onchange=clearChat;
 async function stopRecording(){ holding=false; if(recording?.state==='recording') recording.stop(); }
 $('mic').addEventListener('pointerdown',async event=>{
@@ -158,7 +178,8 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden){stopVoice(
 (async()=>{
   try {
     const data=await (await checked(await fetch('/agents'))).json();
-    for(const agent of data.agents||[]){const option=document.createElement('option');option.value=agent.id;option.textContent=agent.name;$('agents').append(option);}
+    for(const agent of data.agents||[]){agentsByID.set(agent.id,agent);const option=document.createElement('option');option.value=agent.id;option.textContent=agent.name;$('agents').append(option);}
+    companion.setAgent(agentsByID.get($('agents').value));
     status($('agents').options.length?'Ready':'Create an agent on your Mac first.');
     const capabilities=await (await checked(await fetch('/phone/capabilities'))).json();
     $('mic').hidden=!(capabilities.transcription&&window.isSecureContext&&navigator.mediaDevices?.getUserMedia&&window.MediaRecorder);
