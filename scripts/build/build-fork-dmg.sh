@@ -49,8 +49,7 @@ package() {
     )
     xcodebuild "${COMMON[@]}" -scheme osaurus-cli build
     xcodebuild "${COMMON[@]}" -scheme osaurus-plugin-host build
-    xcodebuild "${COMMON[@]}" -scheme osaurus archive -archivePath "$ARCHIVE" \
-        DEPLOYMENT_POSTPROCESSING=YES STRIP_INSTALLED_PRODUCT=YES STRIP_STYLE=all COPY_PHASE_STRIP=YES
+    xcodebuild "${COMMON[@]}" -scheme osaurus archive -archivePath "$ARCHIVE"
 
     # Product case has varied between upstream archive/build lanes. Require exactly
     # one archived app rather than guessing a path or using stale DerivedData.

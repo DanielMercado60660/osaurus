@@ -34,7 +34,9 @@ elif name == 'xcodebuild':
     assert 'CODE_SIGNING_ALLOWED=NO' in args
     if mode == 'build-failure': sys.exit(12)
     if 'archive' in args:
-        assert 'STRIP_INSTALLED_PRODUCT=YES' in args
+        # Archive's default install strip handles the app; forcing STRIP_* globally
+        # also hits package static objects (swift-atomics) and fails.
+        assert not any(a.startswith('STRIP_') for a in args)
         app = pathlib.Path(value('-archivePath')) / 'Products/Applications/osaurus.app'
         binary(app / 'Contents/MacOS/osaurus')
         pin = next(a.split('=', 1)[1] for a in args if a.startswith('OSAURUS_TS_HELPER_SHA256='))
