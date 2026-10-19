@@ -28,6 +28,9 @@ final class StreamingDeltaProcessor {
 
     private var turn: ChatTurn
     private let onSync: (() -> Void)?
+    /// Visible content only, after channel routing and at the UI reveal cadence.
+    /// Reasoning and tool payloads never pass through this hook.
+    var onVisibleDelta: ((String) -> Void)?
 
     /// Pending (unrevealed) deltas held as a character array with a head
     /// cursor. Draining advances `bufferHead` instead of rebuilding the
@@ -327,6 +330,7 @@ final class StreamingDeltaProcessor {
     private func appendContent(_ s: String) {
         guard !s.isEmpty else { return }
         turn.appendContent(s)
+        onVisibleDelta?(s)
         contentLength += s.count
         hasPendingContent = true
     }

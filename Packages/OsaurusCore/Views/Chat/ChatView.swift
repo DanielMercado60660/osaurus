@@ -137,6 +137,14 @@ private struct EmptyStateContent: View, Equatable {
     }
 #endif
 
+/// Events for the visible assistant output of one session. Completion is for
+/// the entire send, including tool continuations, not an individual model step.
+enum AssistantDeltaEvent: Equatable {
+    case delta(turnId: UUID, text: String)
+    case finished
+    case cancelled
+}
+
 @MainActor
 final class ChatSession: ObservableObject {
     /// Notifications whose source data can rewrite the composed system/tool
@@ -194,6 +202,11 @@ final class ChatSession: ObservableObject {
     /// instead of the empty-chat greeting for the gap.
     @Published var isHydratingTranscript: Bool = false
 
+    var assistantDeltas: AnyPublisher<AssistantDeltaEvent, Never> {
+        assistantDeltaEvents.eraseToAnyPublisher()
+    }
+    private let assistantDeltaEvents = PassthroughSubject<AssistantDeltaEvent, Never>()
+
     @Published var isStreaming: Bool = false {
         didSet {
             guard isStreaming != oldValue else { return }
@@ -202,6 +215,7 @@ final class ChatSession: ObservableObject {
                 ChatPerfTrace.shared.begin("stream-\(Int(Date().timeIntervalSince1970))")
                 beginRunProgressMonitor()
             } else {
+                assistantDeltaEvents.send(stopRequested ? .cancelled : .finished)
                 ChatPerfTrace.shared.end()
                 endRunProgressMonitor()
             }
@@ -4424,6 +4438,13 @@ final class ChatSession: ObservableObject {
         return resolved
     }
 
+    private func observeAssistantDeltas(from processor: StreamingDeltaProcessor, turnId: UUID) {
+        processor.onVisibleDelta = { [weak self] text in
+            guard let self, self.isStreaming, !self.stopRequested else { return }
+            self.assistantDeltaEvents.send(.delta(turnId: turnId, text: text))
+        }
+    }
+
     private func completeRunCleanup() {
         currentTask = nil
         isStreaming = false
@@ -5177,6 +5198,7 @@ final class ChatSession: ObservableObject {
         var processor = StreamingDeltaProcessor(turn: currentTurn) { [weak self] in
             self?.rebuildVisibleBlocks()
         }
+        observeAssistantDeltas(from: processor, turnId: currentTurn.id)
         // The relay fires when the ENGINE is done; the last deltas may still
         // be in flight to this loop and the smooth-streaming pacer may still be
         // painting them (live: "…247 248 249 2" shown as complete for the
@@ -5298,6 +5320,7 @@ final class ChatSession: ObservableObject {
                     processor = StreamingDeltaProcessor(
                         turn: newAssistantTurn
                     ) { [weak self] in self?.rebuildVisibleBlocks() }
+                    observeAssistantDeltas(from: processor, turnId: newAssistantTurn.id)
                     rebuildVisibleBlocks()
                     continue
                 }

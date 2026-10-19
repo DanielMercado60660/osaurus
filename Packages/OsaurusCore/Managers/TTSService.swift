@@ -36,8 +36,9 @@ public enum TTSModelState: Equatable {
 /// private queue. Engine construction and `start()` make synchronous XPC
 /// round-trips to coreaudiod that stalled the main thread for seconds in
 /// production, so none of this may run on the main actor.
-/// `@unchecked Sendable`: all mutable state is confined to `queue`.
-final class TTSAudioPipeline: @unchecked Sendable {
+/// `@unchecked Sendable`: audio state is confined to `queue`; cancellation
+/// flags use `cancellationLock`. Callbacks are installed before first playback.
+final class TTSAudioPipeline: TTSStreamPlayer, @unchecked Sendable {
     private let queue = DispatchQueue(label: "ai.osaurus.tts.audio", qos: .userInitiated)
     private let sourceFormat: AVAudioFormat
 
@@ -48,6 +49,15 @@ final class TTSAudioPipeline: @unchecked Sendable {
     private var configured = false
     private var needsRebuild = false
     private var changeObserver: NSObjectProtocol?
+    private var meter = TTSOutputMeter()
+    private var lastMeterTime: TimeInterval = 0
+    private var tapInstalled = false
+    // Only incremental streams use cancellation. Preparation can block in
+    // coreaudiod, so pre-play cancellation must not synchronously wait for it.
+    private let cancellationLock = NSLock()
+    private var cancelled = false
+    private var prepared = false
+    var onOutputLevel: (@Sendable (Float) -> Void)?
 
     /// Invoked (on an arbitrary thread) when the engine reports its graph was
     /// torn down by an output-route change. The owner rebuilds the graph on
@@ -58,6 +68,10 @@ final class TTSAudioPipeline: @unchecked Sendable {
         self.sourceFormat = format
     }
 
+    deinit {
+        if let changeObserver { NotificationCenter.default.removeObserver(changeObserver) }
+    }
+
     /// Configure the engine graph if needed, start the engine, and start the
     /// player node. Runs on the pipeline queue; the caller awaits without
     /// blocking its thread.
@@ -66,7 +80,11 @@ final class TTSAudioPipeline: @unchecked Sendable {
             queue.async {
                 do {
                     try self.configureIfNeededLocked()
-                    self.playerNode.play()
+                    try self.cancellationLock.withLock {
+                        guard !self.cancelled else { throw CancellationError() }
+                        self.playerNode.play()
+                        self.prepared = true
+                    }
                     continuation.resume()
                 } catch {
                     continuation.resume(throwing: error)
@@ -88,6 +106,47 @@ final class TTSAudioPipeline: @unchecked Sendable {
         }
     }
 
+    /// The incremental API requires device-playback completion, not the default
+    /// data-consumed callback used by the legacy playback accounting.
+    func schedulePlayed(samples: [Float], completion: @escaping @Sendable (Bool) -> Void) {
+        queue.async {
+            guard !self.cancellationLock.withLock({ self.cancelled }),
+                let buffer = self.makeBufferLocked(from: samples)
+            else {
+                completion(false)
+                return
+            }
+            self.playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
+                completion(true)
+            }
+        }
+    }
+
+    /// A prepared player stops behind a short scheduling barrier. Before first
+    /// play, cancellation invalidates preparation without waiting for coreaudiod.
+    func cancelPlayback() {
+        let wasPrepared = cancellationLock.withLock {
+            cancelled = true
+            return prepared
+        }
+        if wasPrepared {
+            queue.sync { self.cancelPlaybackLocked() }
+        } else {
+            queue.async { self.cancelPlaybackLocked() }
+        }
+    }
+
+    private func cancelPlaybackLocked() {
+        guard configured else { return }
+        playerNode.stop()
+        playerNode.reset()
+        _ = meter.update(rms: 0)
+        onOutputLevel?(0)
+        // The node is already silent; engine shutdown may involve XPC and
+        // must not extend the caller's synchronous cancellation barrier.
+        queue.async { self.engine.stop() }
+    }
+
     /// Stop and reset the player node (drops any scheduled buffers). The
     /// engine itself keeps running so the next playback start is cheap.
     func stopPlayer() {
@@ -95,6 +154,8 @@ final class TTSAudioPipeline: @unchecked Sendable {
             guard self.configured else { return }
             self.playerNode.stop()
             self.playerNode.reset()
+            _ = self.meter.update(rms: 0)
+            self.onOutputLevel?(0)
         }
     }
 
@@ -125,6 +186,30 @@ final class TTSAudioPipeline: @unchecked Sendable {
             configured = true
             // Registered against the engine we just built, and only once.
             observeEngineConfigurationChangesLocked()
+        }
+        if !tapInstalled {
+            // Mixer samples reflect rendered output, including starvation and
+            // volume, rather than synthesis running ahead of the speakers.
+            engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
+                guard let self, let channels = buffer.floatChannelData else { return }
+                var power: Float = 0
+                for channel in 0..<Int(buffer.format.channelCount) {
+                    let rms = TTSOutputMeter.rms(UnsafeBufferPointer(
+                        start: channels[channel], count: Int(buffer.frameLength)))
+                    power += rms * rms
+                }
+                let rms = sqrt(power / Float(max(1, buffer.format.channelCount)))
+                self.queue.async {
+                    let now = ProcessInfo.processInfo.systemUptime
+                    guard now - self.lastMeterTime >= 1.0 / 30.0 else { return }
+                    // Carry the cadence across render callbacks instead of
+                    // quantizing 30 Hz down to every second mixer buffer.
+                    self.lastMeterTime = max(self.lastMeterTime + 1.0 / 30.0, now - 1.0 / 30.0)
+                    let level = self.meter.update(rms: rms)
+                    self.onOutputLevel?(level)
+                }
+            }
+            tapInstalled = true
         }
         if !engine.isRunning {
             try engine.start()
@@ -201,6 +286,10 @@ public final class TTSService: ObservableObject {
 
     // MARK: - Private state
 
+    @Published public private(set) var outputLevel: Float = 0
+    private var activeStream: TTSStreamHandle?
+    private var activeStreamToken: UUID?
+
     private var manager: PocketTtsManager?
     private var playbackTask: Task<Void, Never>?
     private var initTask: Task<Void, Never>?
@@ -228,6 +317,12 @@ public final class TTSService: ObservableObject {
     private var bufferGeneration = 0
 
     private init() {
+        pipeline.onOutputLevel = { [weak self] level in
+            Task { @MainActor [weak self] in
+                guard let self, self.activeStream == nil else { return }
+                self.outputLevel = self.playingMessageId == nil ? 0 : level
+            }
+        }
         pipeline.onConfigurationChange = {
             Task { @MainActor in
                 TTSService.shared.handleRouteChange()
@@ -236,6 +331,86 @@ public final class TTSService: ObservableObject {
     }
 
     // MARK: - Public API
+
+    /// Starts a single-use incremental utterance with a snapshot of the current
+    /// provider configuration. Supersedes any existing playback. A missing local
+    /// model is reported through the handle's failed event; no implicit download.
+    public func beginStream(id: String) -> TTSStreamHandle {
+        stop()
+        let config = TTSConfigurationStore.load()
+        let manager = manager
+        let token = UUID()
+        let streamPipeline = TTSAudioPipeline(format: AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false)!)
+        streamPipeline.onOutputLevel = { [weak self] level in
+            Task { @MainActor [weak self] in
+                guard let self, self.activeStreamToken == token else { return }
+                self.outputLevel = level
+            }
+        }
+        let handle = TTSStreamHandle(
+            id: id, player: streamPipeline,
+            synthesize: { text, emit in
+                let voice = config.provider == .pocketTTS ? config.voice : config.remoteVoice
+                let activity = MediaActivityLogger.beginSpeech(
+                    text: text,
+                    model: config.provider == .pocketTTS ? "pocket-tts" : config.remoteModel,
+                    voice: voice,
+                    provider: config.provider == .pocketTTS ? "PocketTTS" :
+                        (EgressInfo.host(from: config.remoteEndpoint) ?? L("OpenAI-compatible TTS")),
+                    endpoint: config.provider == .pocketTTS ? nil :
+                        OpenAICompatibleTTSClient.resolvedEndpoint(config.remoteEndpoint),
+                    trigger: .readAloud)
+                var sampleCount = 0
+                do {
+                    switch config.provider {
+                    case .pocketTTS:
+                        guard let manager else { throw TTSPlaybackError.modelNotReady }
+                        let resolvedVoice = PocketTTSVoiceCatalog.availableVoices.contains(voice)
+                            ? voice : TTSConfiguration.defaultVoice
+                        let frames = try await manager.synthesizeStreaming(
+                            text: text, voice: resolvedVoice, temperature: Float(config.temperature))
+                        for try await frame in frames {
+                            try Task.checkCancellation()
+                            sampleCount += frame.samples.count
+                            try await emit(frame.samples)
+                        }
+                    case .openAICompatible:
+                        let apiKey = await Task.detached(priority: .userInitiated) {
+                            TTSRemoteAPIKeyStore.loadSync()
+                        }.value
+                        try Task.checkCancellation()
+                        let client = OpenAICompatibleTTSClient(
+                            endpoint: config.remoteEndpoint, model: config.remoteModel,
+                            voice: voice, speed: config.remoteSpeed, apiKey: apiKey)
+                        for try await samples in try client.synthesizeStreaming(text: text) {
+                            try Task.checkCancellation()
+                            sampleCount += samples.count
+                            try await emit(samples)
+                        }
+                    }
+                    activity.finish(audioSeconds: Double(sampleCount) / 24_000, error: nil)
+                } catch {
+                    activity.finish(audioSeconds: Double(sampleCount) / 24_000,
+                        error: error.localizedDescription, cancelled: Task.isCancelled)
+                    throw error
+                }
+            },
+            onTerminal: { [weak self] in
+                guard let self, self.activeStreamToken == token else { return }
+                self.activeStreamToken = nil
+                self.activeStream = nil
+                self.outputLevel = 0
+            })
+        streamPipeline.onConfigurationChange = { [weak handle] in
+            // Device changes invalidate scheduled-buffer completions. End this
+            // stream honestly rather than reporting lost audio as finished.
+            Task { @MainActor in handle?.cancel() }
+        }
+        activeStreamToken = token
+        activeStream = handle
+        return handle
+    }
 
     /// True when the active provider can synthesize right now. The remote
     /// provider has no local model to download, so it is always "ready";
@@ -299,6 +474,8 @@ public final class TTSService: ObservableObject {
 
     /// Stop any in-flight synthesis and clear playback state.
     public func stop() {
+        activeStream?.cancel()
+        outputLevel = 0
         playbackTask?.cancel()
         playbackTask = nil
         streamFinished = true
