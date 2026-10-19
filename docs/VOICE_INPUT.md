@@ -572,3 +572,6 @@ popover. **Copy latency JSON** exports the in-memory samples to the clipboard.
 Save them to a file and run `python3 fork/metrics/talk_latency.py turns.json` for
 p50/p90 with measured/missing denominators. This exporter applies the same
 nearest-rank percentile rule as the app and does not grade acoustic targets.
+
+A single capture turn exceeding two minutes stops with an explicit error; restart
+talk mode for another turn. This bounds the retained, unsubmitted utterance.
