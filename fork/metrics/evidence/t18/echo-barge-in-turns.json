@@ -1,0 +1,19 @@
+[
+  {
+    "asrFinalMs" : 349.5130834635347,
+    "endOfTurnDecidedMs" : 325.73425001464784,
+    "endOfTurnReason" : "smartTurn",
+    "epoch" : 2,
+    "firstAudioMs" : 7180.066083325073,
+    "firstSentenceReleasedMs" : 6873.907375149429,
+    "firstStreamDeltaMs" : 1478.1168750487268,
+    "firstTokenMs" : 6701.819666661322,
+    "firstVisibleTokenMs" : 6701.819666661322,
+    "reasoningDeltaCount" : 0,
+    "reasoningDurationMs" : 0,
+    "sendIssuedMs" : 359.16141676716506,
+    "smartTurnChecks" : 1,
+    "smartTurnProbability" : 0.9681827,
+    "speechEnd" : 1064127.696480375
+  }
+]

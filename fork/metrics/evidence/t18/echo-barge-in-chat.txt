@@ -1,0 +1,2 @@
+user | Why is the sky blue? Explain it in five sentences.
+assistant | The sky appears blue because of a phenomenon called Rayleigh scattering. When sunlight enters Earth's atmosphere, it collides with gas molecules and particles. Shorter wavelengths of light, like blue 
