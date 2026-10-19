@@ -23,6 +23,7 @@ import AppKit
 import SwiftUI
 
 struct ChatSettingsView: View {
+    @AppStorage(AnimatedAvatarSetting.defaultsKey) private var showAnimatedAvatar = false
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var taskManager = BackgroundTaskManager.shared
 
@@ -128,6 +129,16 @@ struct ChatSettingsView: View {
 
     private var appearanceSection: some View {
         SettingsSection(title: "Appearance", icon: "text.bubble") {
+            SettingsToggle(
+                title: L("Show animated avatar"),
+                description: "Show a floating dinosaur companion and animated chat avatars. Drag the companion to move it; click it to open chat.",
+                anchorId: "settings.chat.animatedAvatar",
+                isOn: $showAnimatedAvatar
+            )
+            .onChange(of: showAnimatedAvatar) { _, _ in
+                AvatarOverlayWindowService.shared.applyPreference()
+            }
+
             SettingsToggle(
                 title: L("Smooth Streaming"),
                 description:

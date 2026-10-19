@@ -19,3 +19,20 @@ Newest entries at the bottom. Each entry: date, what changed, evidence, next.
   not fit a 16 GB target. Improvement over mama-mei: real AEC via
   AVAudioEngine voice processing (mama-mei never had AEC).
   Reference latency: end-of-turn → first audio p50 929 ms / p90 1572 ms.
+
+## 2026-10-18 (day 0, evening)
+
+- Build: `make app` needs `XCODEBUILD_FLAGS="-skipPackagePluginValidation
+  -skipMacroValidation CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual
+  DEVELOPMENT_TEAM="` (plugin trust + upstream's signing team). Clean Release
+  build: 18 min on M4 Pro.
+- Baseline (upstream 24e5121, Qwen3.5-4B-4bit, measured while 2 Codex builds
+  were running — rerun in a quiet window before comparing):
+  bundle 508 MB (exe 451 MB: __LINKEDIT 282 MB unstripped symbols, __TEXT
+  140 MB, __LLVM_COV 20 MB coverage segment in a Release build), server ready
+  2.9 s after launch, idle footprint 50 MB, 4.0 GB with model loaded, cold TTFT
+  5.9 s (includes load), warm TTFT 0.18 s, decode 83 tok/s.
+  → Upstream is already lean at runtime; the "small" wins are bundle-level
+  (strip, drop coverage) rather than runtime rewrites.
+- Codex running: T01 voice plumbing, T02 animated avatar, T04 Tailscale phone
+  access (each in `~/osaurus-wt/<task>`, logs in `~/osaurus-wt/_logs`).
