@@ -184,6 +184,10 @@ struct TTSOutputMeter {
 public final class TTSStreamHandle {
     public let id: String
     public var events: AnyPublisher<TTSStreamEvent, Never> { subject.eraseToAnyPublisher() }
+    // Observation only: text of a synthesis chunk whose first buffer completed.
+    // Chunks may contain multiple sentences; this does not invent word timestamps.
+    var playedChunks: AnyPublisher<String, Never> { playedChunkSubject.eraseToAnyPublisher() }
+    private let playedChunkSubject = PassthroughSubject<String, Never>()
     private let subject = PassthroughSubject<TTSStreamEvent, Never>()
     private let player: any TTSStreamPlayer
     private let synthesize: @MainActor (String, @escaping @MainActor ([Float]) async throws -> Void) async throws -> Void
@@ -279,6 +283,7 @@ public final class TTSStreamHandle {
                         prepared = true
                     }
                     try Task.checkCancellation()
+                    var firstFrame = true
                     try await synthesize(chunk) { [weak self] samples in
                         // Small buffers bound firstAudio latency; the bounded
                         // queue keeps stop independent of synthesis run-ahead.
@@ -289,9 +294,11 @@ public final class TTSStreamHandle {
                             try Task.checkCancellation()
                             guard let self, !self.terminal else { throw CancellationError() }
                             let frame = Array(samples[start..<min(start + 800, samples.count)])
+                            let captionText = firstFrame ? chunk : nil
+                            firstFrame = false
                             self.pending += 1
                             player.schedulePlayed(samples: frame) { [weak self] played in
-                                Task { @MainActor in self?.bufferCompleted(played: played) }
+                                Task { @MainActor in self?.bufferCompleted(played: played, captionText: captionText) }
                             }
                         }
                     }
@@ -313,7 +320,7 @@ public final class TTSStreamHandle {
         }
     }
 
-    private func bufferCompleted(played: Bool) {
+    private func bufferCompleted(played: Bool, captionText: String?) {
         guard !terminal else { return }
         guard played else {
             terminal = true
@@ -332,6 +339,7 @@ public final class TTSStreamHandle {
             heardAudio = true
             subject.send(.firstAudio(id: id))
         }
+        if let captionText { playedChunkSubject.send(captionText) }
         completeIfDrained()
     }
 

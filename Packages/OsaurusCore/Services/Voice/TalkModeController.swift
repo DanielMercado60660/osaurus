@@ -36,6 +36,7 @@ public final class TalkModeController: ObservableObject {
     private var replyEpoch: UInt64?
     private var captureSubscription: AnyCancellable?
     private var chatSubscription: AnyCancellable?
+    private var captionSubscription: AnyCancellable?
     private var ttsSubscription: AnyCancellable?
     private var configurationSubscription: AnyCancellable?
     private var startup: Task<Void, Never>?
@@ -262,6 +263,7 @@ public final class TalkModeController: ObservableObject {
         let epoch = replyEpoch
         chatSubscription = nil
         ttsSubscription = nil
+        captionSubscription = nil
         if epoch != nil, snapshot.state == .userSpeaking || snapshot.state == .endOfTurn,
            duplex?.isBenchmarkRendering == true {
             benchmarkInterruptedRendering = true
@@ -288,6 +290,10 @@ public final class TalkModeController: ObservableObject {
         let handle = TTSService.shared.beginTalkStream(id: "talk-\(epoch)", duplex: duplex,
             voiceOverride: agentID.flatMap { AgentManager.shared.agent(for: $0)?.ttsVoice })
         stream = handle
+        captionSubscription = handle.playedChunks.sink { [weak self] text in
+            guard let self, self.replyEpoch == epoch, self.snapshot.epoch == epoch else { return }
+            self.publishAvatar(.playback(text, epoch))
+        }
         ttsSubscription = handle.events.sink { [weak self] event in
             guard let self, self.replyEpoch == epoch, self.snapshot.epoch == epoch else { return }
             let now = ProcessInfo.processInfo.systemUptime
