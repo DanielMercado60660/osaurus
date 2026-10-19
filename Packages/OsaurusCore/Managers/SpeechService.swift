@@ -6,6 +6,7 @@
 //
 
 @preconcurrency import AVFoundation
+import Combine
 import CoreAudio
 @preconcurrency import FluidAudio
 import Foundation
@@ -615,6 +616,15 @@ private enum SpeechDecoderStateFactory {
     }
 }
 
+/// Live transcription events. Activity edges come directly from the worker's
+/// VAD decision, before its potentially slow ASR call. final is one segment.
+public enum SpeechEvent: Equatable, Sendable {
+    case speechStarted
+    case speechEnded
+    case partial(String)
+    case final(String)
+}
+
 // MARK: - Speech Service
 
 /// Service for audio transcription using FluidAudio
@@ -634,7 +644,16 @@ public final class SpeechService: ObservableObject {
     @Published public var currentTranscription: String = ""
     @Published public var confirmedTranscription: String = ""
     @Published public var audioLevel: Float = 0.0
-    @Published public var isSpeechDetected: Bool = false
+    /// Multicast, main-actor delivery; subscribers observe future events only.
+    public var events: AnyPublisher<SpeechEvent, Never> { speechEvents.eraseToAnyPublisher() }
+    private let speechEvents = PassthroughSubject<SpeechEvent, Never>()
+
+    @Published public var isSpeechDetected: Bool = false {
+        didSet {
+            guard oldValue != isSpeechDetected else { return }
+            speechEvents.send(isSpeechDetected ? .speechStarted : .speechEnded)
+        }
+    }
 
     // MARK: - Private Properties
 
@@ -1371,6 +1390,7 @@ public final class SpeechService: ObservableObject {
                 switch update {
                 case .partial(let text):
                     self.currentTranscription = text
+                    self.speechEvents.send(.partial(text))
                 case .final(let text):
                     if self.confirmedTranscription.isEmpty {
                         self.confirmedTranscription = text
@@ -1378,6 +1398,7 @@ public final class SpeechService: ObservableObject {
                         self.confirmedTranscription += " " + text
                     }
                     self.currentTranscription = ""
+                    self.speechEvents.send(.final(text))
                 case .speechActivity(let detected):
                     self.isSpeechDetected = detected
                 }
